@@ -1,0 +1,112 @@
+# Talkie speech-assist application configuration.
+# All processing runs locally.
+
+audio:
+  device_id: null   # null = default system microphone
+  sample_rate: 16000
+  # Longer = more time to hear all words (allows pauses between words). Shorter = faster first result but may cut off.
+  chunk_duration_sec: 5   # 5 = faster response; 7–10 if you need longer pauses (speech-impaired)
+  # Input sensitivity (gain). 1.0 = normal; 2.0-4.0 = more sensitive for quiet speech. Adjust if too loud or too quiet.
+  sensitivity: 3.0
+  # Auto sensitivity: if there is some audio (above noise) but STT returns empty, increase sensitivity.
+  auto_sensitivity: false   # manual only for now
+  auto_sensitivity_min_level: 0.002   # RMS above this = possible speech (very low = boost)
+  auto_sensitivity_max_level: 0.08    # Only boost when RMS in [min_level, this]; above = don't assume too quiet
+  auto_sensitivity_step: 0.25
+  auto_sensitivity_cooldown_chunks: 3 # Wait this many chunks after a bump before considering again
+
+stt:
+  # engine: vosk = faster, lower latency; whisper = best accuracy (recommended for speech-impaired users)
+  engine: whisper
+  vosk:
+    # For better Vosk accuracy use a larger model, e.g. vosk-model-en-us-0.22 from https://alphacephei.com/vosk/models
+    model_path: "models/vosk-model-small-en-us-0.15"
+  whisper:
+    # model_path: base = fastest; small = good balance; medium = best accuracy (especially impaired speech), needs ~5GB RAM
+    model_path: "base"
+
+ollama:
+  base_url: "http://localhost:11434"
+  model_name: "mistral"
+
+# LLM prompts (system prompt and user prompt template). All prompt text is configured here.
+llm:
+  # Minimum transcribed character length to send to the LLM. Shorter text is often noise or mishearing; skipping reduces repeated wrong phrases.
+  min_transcription_length: 3
+  # Regeneration: raw STT -> Ollama intent sentence first. Set false for one LLM call (faster, less homophone correction).
+  regeneration_enabled: true
+  # When true, regenerated sentence is used as the final response when certainty >= threshold (or when certainty is not requested), skipping the second Ollama call. When false, completion is always run.
+  use_regeneration_as_response: true
+  # Ask regeneration to return JSON with "sentence" and "certainty" (0-100). When true, second call is skipped only when certainty >= regeneration_certainty_threshold.
+  regeneration_request_certainty: true
+  # Use regeneration as response only when certainty >= this (0-100). When model does not return certainty, regeneration is always used as response when use_regeneration_as_response is true.
+  regeneration_certainty_threshold: 70
+  regeneration_system_prompt: |
+    You interpret raw speech-recognition output from a speech-impaired user. The text is often fragmented, misheard, or contains homophones (e.g. "hockey" for "I'm", "outlook" for "cat out"). Your job is to output exactly one sentence that has the highest probability of being what the user intended, as the user would say it to the person they are talking to (e.g. a caregiver). Use first person for statements about themselves (e.g. "I want water.", "My leg hurts.", "I'm cold."). For requests to the listener—asking them to do something—output the request as the user would say it (e.g. "Pass me the salt.", "Pass me the chicken.", "Could you turn off the light?"), not as first-person past tense ("I passed the salt" is wrong when they mean pass me the salt). If the user doesn't use "I" (or equivalent), or uses "you" or refers to the person they're asking, it's likely a question—output it as the question they would ask (e.g. "Do you have the time?", "Could you help?", "Are you coming?"). Output only that sentence—no preamble, no explanation. If the input is gibberish or unintelligible, output exactly: I didn't catch that.
+  regeneration_user_prompt_template: "Raw speech recognition: {transcription}"
+  system_prompt: |
+    You assist a speech-impaired user in conversation. You will receive a partial or fragmented sentence from their speech recognition (e.g. a few words, a single word, or an incomplete thought). Your job is to turn that into one clear, complete, natural sentence that conveys what they mean, as the user would say it to the person they are talking to (e.g. a caregiver). Use first person for statements about themselves (e.g. "I want water", "I'm cold", "My leg hurts"). For requests to the listener—output the request as they would say it (e.g. "Pass me the salt.", "Pass me the chicken."). If the user doesn't use "I" or uses "you" or refers to the person they're asking, it's likely a question—output it as the question they would ask (e.g. "Do you have the time?", "Could you help?", "Are you coming?"). Never third person or "the user wants...". Keep it concise. Do not explain or add meta-commentary; output only the completed sentence.
+    Always complete the user's words into one sentence. Single words are valid: e.g. "test" → "I'm just testing the system." "water" → "I want water." "help" → "I need help." For "pass salt" or "pass chicken" output "Pass me the salt." / "Pass me the chicken." If they say something with "you" or without "I", treat it as a question when appropriate. Never reply with "Could you repeat that?" or "I'm having trouble understanding"—those are forbidden. Your only possible reply is either (a) one sentence that completes what they said, or (b) if the transcription is truly meaningless noise or gibberish, output exactly: I didn't catch that.
+    Base your output ONLY on what the user actually said. Never invent a full sentence they did not say (e.g. do not output "can you help me understand my bill" unless they clearly said something about a bill or understanding). Speech recognition often mishears: "hockey" for "I am" or "I'm", "outlook" for "cat out", "capping" for "cat out". If the transcription could be such a mishearing and a simple substitution gives a natural first-person sentence, prefer that (e.g. "hockey is ready" → "I'm ready"; "hockey cold" → "I'm cold"). Do not assume sports or other specific meanings (hockey, outlook email, cap/hat) unless the words clearly support it.
+    Output only the single completed sentence, no preamble or suffix.
+  user_prompt_template: "Partial sentence from speech-impaired user: {transcription}"
+  # Short instruction for export JSONL (instruction field). If null, system_prompt is used.
+  export_instruction: "You assist a speech-impaired user. Turn their partial speech into one clear, complete sentence in first person (as the user speaking: I want..., I need...). Output only that sentence."
+
+# Text-to-speech: speak Ollama responses (macOS 'say' when engine: say)
+# All voice options (use exact name for voice:); get current list with: say -v ?
+#   en_GB: Daniel, Eddy (English (UK)), Flo (English (UK)), Grandma (English (UK)), Grandpa (English (UK)), Reed (English (UK)), Rocko (English (UK)), Sandy (English (UK)), Shelley (English (UK))
+#   en_US: Albert, Bad News, Bahh, Bells, Boing, Bubbles, Cellos, Eddy (English (US)), Fred, Good News, Junior, Jester, Kathy, Ralph, Reed (English (US)), Rocko (English (US)), Samantha, Sandy (English (US)), Shelley (English (US)), Superstar, Trinoids, Whisper, Wobble, Zarvox
+#   Other: Alice it_IT, Alva sv_SE, Aman en_IN, Amélie fr_CA, Amira ms_MY, Anna de_DE, Aru kk_KZ, Carmit he_IL, Damayanti id_ID, Daria bg_BG, Ellen nl_BE, Geeta te_IN, Ioana ro_RO, Jacques fr_FR, Joana pt_PT, Karen en_AU, Kyoko ja_JP, Lana hr_HR, Laura sk_SK, Lekha hi_IN, Lesya uk_UA, Linh vi_VN, Luciana pt_BR, Majed ar_001, Tünde hu_HU, Meijia zh_TW, Melina el_GR, Milena ru_RU, Moira en_IE, Mónica es_ES, Montse ca_ES, Nora nb_NO, Ona lt_LT, Organ en_US, Paulina es_MX, Piya bn_IN, Rishi en_IN, Sara da_DK, Satu fi_FI, Sinji zh_HK, Tara en_IN, Tessa en_ZA, Thomas fr_FR, Tina sl_SI, Tingting zh_CN, Vani ta_IN, Xander nl_NL, Yelda tr_TR, Yuna ko_KR, Zosia pl_PL, Zuzana cs_CZ
+#   Eddy, Flo, Grandma, Grandpa, Reed, Rocko, Sandy, Shelley each have variants: (German (Germany)), (English (UK)), (English (US)), (Spanish (Spain)), (Spanish (Mexico)), (Finnish (Finland)), (French (Canada)), (French (France)), (Italian (Italy)), (Japanese (Japan)), (Korean (South Korea)), (Portuguese (Brazil)), (Chinese (China mainland)), (Chinese (Taiwan))
+tts:
+  enabled: true
+  engine: say   # say = macOS built-in
+  voice: Daniel   # default male (en_GB); override in Settings or set one of the names above
+
+persistence:
+  db_path: "data/talkie.db"
+
+# RAG: document upload, vectorization (Ollama embed), Chroma store; "Ask documents" query-by-voice.
+rag:
+  # Ollama embedding model; run: ollama pull nomic-embed-text
+  embedding_model: "nomic-embed-text"
+  vector_db_path: "data/rag_chroma"
+  top_k: 5
+  document_qa_top_k: 8
+  chunk_size: 500
+  chunk_overlap: 100
+  min_query_length: 3
+
+# Scheduled curation: pattern recognition, weighting, optional prune (run in-app or via CLI)
+curation:
+  # Run curator every N hours when app is running (0 = disabled)
+  interval_hours: 24
+  # Curation behavior
+  min_weight: 0.0
+  max_weight: 10.0
+  correction_weight_bump: 1.5
+  pattern_count_weight_scale: 0.5
+  exclude_duplicate_phrase: true
+  exclude_empty_transcription: true
+  delete_older_than_days: null   # set to e.g. 365 to prune very old interactions
+  max_interactions_to_curate: 10000
+
+# Profile / learning: limits and display caps (used for LLM context and UI)
+profile:
+  correction_limit: 200
+  accepted_limit: 50
+  user_context_max_chars: 2000
+  correction_display_cap: 50
+  accepted_display_cap: 30
+  history_list_limit: 100
+
+ui:
+  fullscreen: true
+  high_contrast: true
+  font_size: 24
+  # Response area (large text); default 48
+  response_font_size: 48
+
+logging:
+  level: INFO   # DEBUG | INFO | WARNING | ERROR
