@@ -24,6 +24,28 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
+# Podman Ollama disabled; use local Ollama (run: ollama serve). Uncomment to auto-start talkie-ollama container.
+# def _ensure_podman_ollama_if_localhost(base_url: str) -> None:
+#     """
+#     If Ollama is configured for localhost:11434, try to start the Podman
+#     Ollama container (talkie-ollama) so the app uses the Podman version.
+#     No-op if base_url is not localhost or if podman/container is unavailable.
+#     """
+#     if not base_url:
+#         return
+#     url = (base_url or "").strip().lower().rstrip("/")
+#     if url in ("http://localhost:11434", "http://127.0.0.1:11434"):
+#         try:
+#             subprocess.run(
+#                 ["podman", "start", "talkie-ollama"],
+#                 capture_output=True,
+#                 timeout=10,
+#                 check=False,
+#             )
+#         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+#             pass
+
+
 def _maybe_start_local_servers(config: dict) -> None:
     """
     Start local module servers if they're configured to run on localhost.
@@ -129,26 +151,34 @@ def validate_config(config: dict) -> None:
     if not model or not str(model).strip():
         raise ValueError("config.ollama.model_name must be non-empty")
 
+    base_url = ollama.get("base_url", "http://localhost:11434")
+    from config import resolve_internal_service_url
+
+    consul_cfg = (config.get("infrastructure") or {}).get("consul") or {}
+    base_url = resolve_internal_service_url(base_url, consul_cfg)
+    # _ensure_podman_ollama_if_localhost(base_url)  # disabled; use local ollama serve
+
     # Ensure Ollama is reachable and the configured model is available (fail fast)
     from llm.client import OllamaClient
-
-    base_url = ollama.get("base_url", "http://localhost:11434")
     client = OllamaClient(base_url=base_url, model_name=str(model).strip())
     if not client.check_connection(timeout_sec=5.0):
         raise ValueError(
             f"Ollama is not reachable at {base_url}. "
-            "Start Ollama (e.g. run ./talkie app or ollama serve) and ensure the server is running."
+            "Run ollama serve (local Ollama). Or start Podman Ollama if you re-enable it in compose/scripts."
         )
-    # Wait for model to appear (e.g. container entrypoint or ./talkie app may still be pulling)
-    wait_sec = 120
-    interval_sec = 10
+    # Wait briefly for model (e.g. still pulling); then warn and continue so Web UI can start
+    wait_sec = 15
+    interval_sec = 5
     for elapsed in range(0, wait_sec, interval_sec):
         if client.check_model_available(timeout_sec=5.0):
             break
         if elapsed + interval_sec >= wait_sec:
-            raise ValueError(
-                f"Ollama model '{model}' is not available. Pull it with: ollama pull {model}"
+            logger.warning(
+                "Ollama model '%s' is not available. Web UI will start; LLM calls will fail until you run: ollama pull %s",
+                model,
+                model,
             )
+            break
         time.sleep(interval_sec)
 
 

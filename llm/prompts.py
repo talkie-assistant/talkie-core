@@ -215,6 +215,29 @@ def parse_browse_intent(raw: str) -> dict:
     return out
 
 
+# Trailing phrases to strip from spoken/display response so certainty is not spoken.
+CERTAINTY_STRIP_PATTERNS = [
+    re.compile(
+        r"\s*[.,;:]?\s*\(?\s*certainty\s*[:\s]?\s*\d+\s*%?\s*\)?\s*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\s*[.,;:]?\s*\(?\s*\d+\s*%\s*certainty\s*\)?\s*$",
+        re.IGNORECASE,
+    ),
+]
+
+
+def strip_certainty_from_response(text: str) -> str:
+    """Remove trailing certainty phrases so they are not spoken or shown."""
+    if not text or not text.strip():
+        return text
+    out = text.strip()
+    for pat in CERTAINTY_STRIP_PATTERNS:
+        out = pat.sub("", out).strip()
+    return out.strip() or text.strip()
+
+
 def parse_regeneration_response(raw: str) -> tuple[str, int | None]:
     """
     Parse the regeneration model output. If it is JSON with "sentence" and "certainty",
@@ -230,11 +253,13 @@ def parse_regeneration_response(raw: str) -> tuple[str, int | None]:
     try:
         data = json.loads(text)
         if not isinstance(data, dict):
-            return (raw.strip(), None)
+            return (strip_certainty_from_response(raw.strip()), None)
         sentence = data.get("sentence")
         if sentence is None:
-            return (raw.strip(), None)
-        sentence = str(sentence).strip() or raw.strip()
+            return (strip_certainty_from_response(raw.strip()), None)
+        sentence = strip_certainty_from_response(
+            str(sentence).strip() or raw.strip()
+        )
         certainty = data.get("certainty")
         if certainty is None:
             return (sentence, None)
@@ -245,4 +270,4 @@ def parse_regeneration_response(raw: str) -> tuple[str, int | None]:
         except (TypeError, ValueError):
             return (sentence, None)
     except json.JSONDecodeError:
-        return (raw.strip(), None)
+        return (strip_certainty_from_response(raw.strip()), None)

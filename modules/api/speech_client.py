@@ -161,9 +161,15 @@ class RemoteSpeakerFilter(SpeakerFilter):
 
     def __init__(self, client: ModuleAPIClient) -> None:
         self._client = client
+        self._last_reject_reason: str | None = None
+
+    def get_last_reject_reason(self) -> str | None:
+        """Return a short reason for the last rejection, or None."""
+        return self._last_reject_reason
 
     def accept(self, transcription: str, audio_bytes: bytes | None = None) -> bool:
         """Check if transcription should be accepted via remote server."""
+        self._last_reject_reason = None
         try:
             data: dict[str, str] = {"transcription": transcription}
             if audio_bytes is not None:
@@ -171,7 +177,10 @@ class RemoteSpeakerFilter(SpeakerFilter):
             response = self._client._request(
                 "POST", "/speaker_filter/accept", json_data=data
             )
-            return bool(response.get("accept", True))
+            accept = bool(response.get("accept", True))
+            if not accept:
+                self._last_reject_reason = response.get("reason")
+            return accept
         except Exception as e:
             logger.debug("Remote speaker filter accept failed: %s", e)
             return True  # Default to accept on error

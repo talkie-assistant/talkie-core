@@ -16,9 +16,28 @@ logger = logging.getLogger(__name__)
 
 _SAY_PATH = "/usr/bin/say"
 
+# Known macOS 'say' voice names -> gender for filtering. Unknown voices are treated as "unknown".
+_VOICE_GENDER: dict[str, str] = {
+    "Agnes": "female", "Albert": "male", "Alex": "male", "Alice": "female", "Alva": "female",
+    "Amelie": "female", "Anna": "female", "Bruce": "male", "Carmit": "female", "Daniel": "male",
+    "Damayanti": "female", "Diego": "male", "Ellen": "female", "Fiona": "female", "Fred": "male",
+    "Ioana": "female", "Joana": "female", "Junior": "male", "Kanya": "female", "Karen": "female",
+    "Kathy": "female", "Kyoko": "female", "Laura": "female", "Lekha": "female", "Luciana": "female",
+    "Mariska": "female", "Mei-Jia": "female", "Melina": "female", "Milena": "female", "Moira": "female",
+    "Monica": "female", "Nora": "female", "Paulina": "female", "Ralph": "male", "Samantha": "female",
+    "Sara": "female", "Satu": "female", "Tarik": "male", "Tessa": "female", "Thomas": "male",
+    "Ting-Ting": "female", "Veena": "female", "Vicki": "female", "Victoria": "female", "Xander": "male",
+    "Yelda": "female", "Yuna": "female", "Zosia": "female", "Zuzana": "female",
+}
+
 
 def get_available_voices() -> list[str]:
     """Return list of macOS 'say' voice names (e.g. Alex, Samantha). Empty if not macOS or say unavailable."""
+    return [v["name"] for v in get_available_voices_with_gender()]
+
+
+def get_available_voices_with_gender() -> list[dict[str, str]]:
+    """Return list of {name, gender} for macOS 'say' voices. gender is 'male', 'female', or 'unknown'."""
     import shutil
 
     say_bin = shutil.which("say") or _SAY_PATH
@@ -31,15 +50,17 @@ def get_available_voices() -> list[str]:
         )
         if result.returncode != 0:
             return []
-        voices = []
+        voices: list[dict[str, str]] = []
         for line in result.stdout.splitlines():
             line = line.strip()
             if not line:
                 continue
             parts = line.split()
             if parts:
-                voices.append(parts[0])
-        return sorted(voices)
+                name = parts[0]
+                gender = _VOICE_GENDER.get(name, "unknown")
+                voices.append({"name": name, "gender": gender})
+        return sorted(voices, key=lambda x: x["name"])
     except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
         return []
 

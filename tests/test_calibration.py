@@ -377,7 +377,7 @@ def test_voice_profile_get_similarity_threshold_default() -> None:
     """get_similarity_threshold returns default when key missing."""
     repo = MagicMock()
     repo.get = lambda k: None
-    assert get_similarity_threshold(repo) == 0.75
+    assert get_similarity_threshold(repo) == 0.62
 
 
 def test_voice_profile_clear_calls_delete() -> None:

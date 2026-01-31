@@ -21,6 +21,7 @@ if str(_ROOT) not in sys.path:
 
 from config import AppConfig  # noqa: E402
 from run import bootstrap_config_and_db  # noqa: E402
+from starlette.requests import Request  # module-level so FastAPI can resolve request: Request in route handlers
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ def _create_pipeline_and_app(
     # Use no-op TTS on the server so only the browser speaks (avoids double voice: server + client TTS).
     from modules.speech.tts.noop_engine import NoOpTTSEngine
 
+    # Always use speech module's speaker filter when available (voice profile: only calibrated speaker).
     pipeline = create_pipeline(
         config,
         history_repo,
@@ -108,8 +110,11 @@ def _create_pipeline_and_app(
             from llm.client import OllamaClient
 
             ollama_cfg = config.get("ollama", {})
+            base_url = config.resolve_internal_service_url(
+                ollama_cfg.get("base_url", "http://localhost:11434")
+            )
             intent_llm = OllamaClient(
-                base_url=ollama_cfg.get("base_url", "http://localhost:11434"),
+                base_url=base_url,
                 model_name=ollama_cfg.get("model_name", "mistral"),
                 options=ollama_cfg.get("options"),
             )
@@ -192,7 +197,6 @@ def main() -> None:
         WebSocketDisconnect,
     )
     from fastapi.exceptions import RequestValidationError
-    from starlette.requests import Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, JSONResponse
     import tempfile
@@ -325,6 +329,7 @@ def main() -> None:
         keys = [
             "user_context",
             "tts_voice",
+            "tts_voice_filter",
             "calibration_sensitivity",
             "calibration_chunk_duration_sec",
             "calibration_min_transcription_length",
@@ -345,6 +350,7 @@ def main() -> None:
         allowed = (
             "user_context",
             "tts_voice",
+            "tts_voice_filter",
             "calibration_sensitivity",
             "calibration_chunk_duration_sec",
             "calibration_min_transcription_length",
@@ -425,12 +431,14 @@ def main() -> None:
     @app.get("/api/settings/voices")
     async def api_settings_voices():
         try:
-            from modules.speech.tts.say_engine import get_available_voices
+            from modules.speech.tts.say_engine import get_available_voices_with_gender
 
-            voices = get_available_voices()
-            return {"voices": voices if voices else ["Daniel"]}
+            voices = get_available_voices_with_gender()
+            if not voices:
+                return {"voices": [{"name": "Daniel", "gender": "male"}]}
+            return {"voices": voices}
         except Exception:
-            return {"voices": ["Daniel"]}
+            return {"voices": [{"name": "Daniel", "gender": "male"}]}
 
     @app.get("/api/training")
     async def api_training_list():
@@ -506,6 +514,8 @@ def main() -> None:
                     if "disconnect" in str(e).lower():
                         break
                     raise
+                if raw_msg.get("type") == "websocket.disconnect":
+                    break
                 if "text" in raw_msg:
                     try:
                         data = json.loads(raw_msg["text"])

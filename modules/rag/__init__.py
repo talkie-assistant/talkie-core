@@ -122,6 +122,19 @@ def register_with_pipeline(pipeline: object, config: object) -> RAGService | Non
     else:
         # In-process mode: return local implementation
         cfg = get_rag_section(raw)
+        # Resolve *.service.consul via Consul (authoritative name server)
+        if hasattr(config, "resolve_internal_service_url"):
+            cfg["base_url"] = config.resolve_internal_service_url(cfg["base_url"])
+            ch = cfg.get("chroma_host") or ""
+            if ch and ".service.consul" in ch.lower():
+                from urllib.parse import urlparse
+
+                chroma_url = config.resolve_internal_service_url(
+                    "http://" + ch + ":" + str(cfg.get("chroma_port", 8000))
+                )
+                resolved_host = urlparse(chroma_url).hostname
+                if resolved_host:
+                    cfg["chroma_host"] = resolved_host
         service = RAGService(cfg)
 
     def rag_retriever(query: str, top_k: int | None = None) -> str:

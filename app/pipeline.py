@@ -31,6 +31,7 @@ from llm.prompts import (
     build_system_prompt,
     build_user_prompt,
     parse_regeneration_response,
+    strip_certainty_from_response,
 )
 from persistence.history_repo import HistoryRepo, InteractionRecord
 from persistence.settings_repo import SettingsRepo
@@ -52,7 +53,13 @@ def create_pipeline(
     auto_sensitivity: dict | None = None,
     llm_prompt_config: dict | None = None,
 ) -> Pipeline:
-    """Build pipeline from config and optional injected speech components."""
+    """
+    Build pipeline from config and optional injected speech components.
+
+    When speech components are filled from the speech module, the speaker filter
+    (voice profile when configured) is always used so the app only responds to
+    the calibrated speaker for all entry points and modules (web, run, remote).
+    """
     if capture is None or stt is None or tts is None or speaker_filter is None:
         try:
             from modules.speech import create_speech_components
@@ -61,6 +68,7 @@ def create_pipeline(
             capture = capture if capture is not None else comps.capture
             stt = stt if stt is not None else comps.stt
             tts = tts if tts is not None else comps.tts
+            # Always use speech module's speaker filter when available (enforces voice profile)
             speaker_filter = (
                 speaker_filter if speaker_filter is not None else comps.speaker_filter
             )
@@ -87,8 +95,11 @@ def create_pipeline(
             llm_prompt_config = config.get("llm", {}) or {}
 
     ollama_cfg = config.get("ollama", {})
+    base_url = config.resolve_internal_service_url(
+        ollama_cfg.get("base_url", "http://localhost:11434")
+    )
     client = OllamaClient(
-        base_url=ollama_cfg.get("base_url", "http://localhost:11434"),
+        base_url=base_url,
         model_name=ollama_cfg.get("model_name", "mistral"),
         timeout_sec=float(ollama_cfg.get("timeout_sec", 45)),
         options=ollama_cfg.get("options"),
@@ -445,7 +456,13 @@ class Pipeline:
                 continue
 
             if not self._speaker_filter.accept(text, chunk):
-                self._debug("Speaker filter: rejected")
+                reason = None
+                if hasattr(self._speaker_filter, "get_last_reject_reason"):
+                    reason = self._speaker_filter.get_last_reject_reason()
+                self._debug(
+                    "Speaker filter: rejected"
+                    + (f" ({reason})" if reason else " (voice did not match enrolled profile)")
+                )
                 continue
 
             # Skip only when same text as immediately previous chunk (consecutive duplicate); respond every time they talk otherwise
@@ -534,39 +551,51 @@ class Pipeline:
                         "Ollama regeneration: raw -> intent sentence"
                         + (" (with certainty)" if request_certainty else "")
                     )
-                    if self._executor is None:
+                    if not self._running or self._executor is None:
                         regenerated = self._llm.generate(reg_user, reg_system)
                         profile_context_prefetch, recent_list_prefetch = (
                             self._prefetch_profile_and_recent(turns)
                         )
                     else:
-                        future_regen = self._executor.submit(
-                            self._llm.generate, reg_user, reg_system
-                        )
-                        future_ctx = self._executor.submit(
-                            self._prefetch_profile_and_recent, turns
-                        )
+                        submitted = False
                         try:
-                            regenerated = future_regen.result(
-                                timeout=self._llm.timeout_sec + 10
+                            future_regen = self._executor.submit(
+                                self._llm.generate, reg_user, reg_system
                             )
-                            profile_ctx, recent_list = future_ctx.result(timeout=30)
-                            profile_context_prefetch = profile_ctx
-                            recent_list_prefetch = recent_list
-                        except FuturesTimeoutError:
-                            regenerated = self._llm.generate(reg_user, reg_system)
-                            profile_context_prefetch, recent_list_prefetch = (
-                                self._prefetch_profile_and_recent(turns)
+                            future_ctx = self._executor.submit(
+                                self._prefetch_profile_and_recent, turns
                             )
-                        except Exception as e:
-                            logger.debug(
-                                "Parallel prefetch or regen failed, falling back to sequential: %s",
-                                e,
-                            )
-                            regenerated = self._llm.generate(reg_user, reg_system)
-                            profile_context_prefetch, recent_list_prefetch = (
-                                self._prefetch_profile_and_recent(turns)
-                            )
+                            submitted = True
+                        except RuntimeError as e:
+                            if "shutdown" in str(e).lower() or "futures" in str(e).lower():
+                                regenerated = self._llm.generate(reg_user, reg_system)
+                                profile_context_prefetch, recent_list_prefetch = (
+                                    self._prefetch_profile_and_recent(turns)
+                                )
+                            else:
+                                raise
+                        if submitted:
+                            try:
+                                regenerated = future_regen.result(
+                                    timeout=self._llm.timeout_sec + 10
+                                )
+                                profile_ctx, recent_list = future_ctx.result(timeout=30)
+                                profile_context_prefetch = profile_ctx
+                                recent_list_prefetch = recent_list
+                            except FuturesTimeoutError:
+                                regenerated = self._llm.generate(reg_user, reg_system)
+                                profile_context_prefetch, recent_list_prefetch = (
+                                    self._prefetch_profile_and_recent(turns)
+                                )
+                            except Exception as e:
+                                logger.debug(
+                                    "Parallel prefetch or regen failed, falling back to sequential: %s",
+                                    e,
+                                )
+                                regenerated = self._llm.generate(reg_user, reg_system)
+                                profile_context_prefetch, recent_list_prefetch = (
+                                    self._prefetch_profile_and_recent(turns)
+                                )
                     if regenerated and regenerated.strip():
                         intent_sentence, regeneration_certainty = (
                             parse_regeneration_response(regenerated)
@@ -752,12 +781,15 @@ class Pipeline:
                         except Exception as e:
                             logger.exception("Failed to save interaction: %s", e)
                             interaction_id = 0
-                        self._on_response(web_response, interaction_id)
+                        spoken_text = strip_certainty_from_response(
+                            web_response or ""
+                        )
+                        self._on_response(spoken_text, interaction_id)
                         prev_spoken = (self._last_spoken_response or "").strip().lower()
-                        self._last_spoken_response = (web_response or "").strip()
+                        self._last_spoken_response = (spoken_text or "").strip()
                         if prev_spoken != (self._last_spoken_response or "").lower():
                             try:
-                                self._tts.speak(web_response)
+                                self._tts.speak(spoken_text)
                             except Exception as e:
                                 logger.exception("TTS speak failed: %s", e)
                         else:
@@ -1010,16 +1042,17 @@ class Pipeline:
                     self._on_error("Could not save to history")
                     interaction_id = 0
 
-                self._on_response(response, interaction_id)
+                spoken_text = strip_certainty_from_response(response or "")
+                self._on_response(spoken_text, interaction_id)
                 prev_spoken_norm = (
                     _norm(self._last_spoken_response)
                     if self._last_spoken_response
                     else ""
                 )
-                self._last_spoken_response = (response or "").strip()
-                if not response or _norm(response) != prev_spoken_norm:
+                self._last_spoken_response = (spoken_text or "").strip()
+                if not spoken_text or _norm(spoken_text) != prev_spoken_norm:
                     try:
-                        self._tts.speak(response)
+                        self._tts.speak(spoken_text)
                         self._debug(
                             "TTS: started speaking (speak again to abort and retry)"
                         )

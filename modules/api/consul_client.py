@@ -1,16 +1,25 @@
 """
 Consul client wrapper for service discovery and registration.
+Uses Consul as the authoritative name server for internal services (*.service.consul).
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import consul
 
 logger = logging.getLogger(__name__)
+
+# Hostnames that should be resolved via Consul (authoritative name server)
+CONSUL_SERVICE_DOMAIN = ".service.consul"
+CONSUL_SERVICE_PATTERN = re.compile(
+    r"^([a-zA-Z0-9_-]+)" + re.escape(CONSUL_SERVICE_DOMAIN) + r"$"
+)
 
 
 class ConsulClient:
@@ -202,3 +211,76 @@ class ConsulClient:
         except Exception as e:
             logger.warning("Failed to get Consul key %s: %s", key, e)
             return None
+
+    def resolve_consul_url(self, url: str) -> str:
+        """
+        If the URL host is *.service.consul, resolve it via Consul (authoritative
+        name server) and return a URL with the resolved address. Otherwise return
+        the URL unchanged.
+
+        Args:
+            url: URL that may contain a host like ollama.service.consul
+
+        Returns:
+            URL with host replaced by Consul-resolved address, or original URL
+        """
+        try:
+            parsed = urlparse(url)
+            host = (parsed.hostname or "").strip().lower()
+            if not host or not host.endswith(CONSUL_SERVICE_DOMAIN):
+                return url
+            match = CONSUL_SERVICE_PATTERN.match(host)
+            if not match:
+                return url
+            service_name = match.group(1)
+            services = self.get_healthy_services(service_name)
+            if not services:
+                logger.warning(
+                    "Consul: no healthy instances for %s, using URL as-is", service_name
+                )
+                return url
+            first = services[0]
+            address = first.get("address", "").strip()
+            port = first.get("port") or (parsed.port if parsed.port is not None else 0)
+            if not address:
+                return url
+            # Rebuild URL with resolved host:port
+            netloc = f"{address}:{port}" if port else address
+            new_parsed = parsed._replace(netloc=netloc)
+            resolved = urlunparse(new_parsed)
+            logger.debug(
+                "Consul: resolved %s -> %s", url, resolved
+            )
+            return resolved
+        except Exception as e:
+            logger.debug("Consul: resolve %s failed: %s", url, e)
+            return url
+
+
+def resolve_url_via_consul(
+    url: str,
+    consul_host: str = "localhost",
+    consul_port: int = 8500,
+) -> str:
+    """
+    Resolve a URL whose host is *.service.consul via Consul (authoritative name
+    server). If the host is not a Consul service name, return the URL unchanged.
+
+    Args:
+        url: URL that may contain a host like ollama.service.consul:11434
+        consul_host: Consul server host
+        consul_port: Consul server port
+
+    Returns:
+        URL with host replaced by Consul-resolved address, or original URL
+    """
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").strip().lower()
+    if not host or not host.endswith(CONSUL_SERVICE_DOMAIN):
+        return url
+    try:
+        client = ConsulClient(host=consul_host, port=consul_port)
+        return client.resolve_consul_url(url)
+    except Exception as e:
+        logger.debug("resolve_url_via_consul failed: %s", e)
+        return url

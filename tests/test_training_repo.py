@@ -111,8 +111,6 @@ def test_get_for_profile_empty_returns_list(repo: TrainingRepo) -> None:
     facts = repo.get_for_profile(limit=10)
     assert facts == []
     assert isinstance(facts, list)
-
-
 def test_delete_nonexistent_id_no_error(repo: TrainingRepo) -> None:
     repo.add("Only.")
     repo.delete(99999)

@@ -215,7 +215,12 @@ class SpeechModuleServer(BaseModuleServer):
                 accept = self._components.speaker_filter.accept(
                     transcription, audio_bytes
                 )
-                return {"accept": accept}
+                reason = None
+                if not accept and hasattr(
+                    self._components.speaker_filter, "get_last_reject_reason"
+                ):
+                    reason = self._components.speaker_filter.get_last_reject_reason()
+                return {"accept": accept, "reason": reason}
             except Exception as e:
                 logger.exception("Speaker filter accept failed: %s", e)
                 return self._error_response(
@@ -284,13 +289,15 @@ class SpeechModuleServer(BaseModuleServer):
                 )
 
     async def startup(self) -> None:
-        """Initialize speech components on startup."""
+        """Initialize speech components on startup. Speaker filter uses voice profile when configured."""
         await super().startup()
         try:
             self._components = self._factory.create_components()
             self._components.stt.start()
             self.set_ready(True)
-            logger.info("Speech module initialized and ready")
+            logger.info(
+                "Speech module initialized and ready (speaker filter: only calibrated speaker when profile enrolled)"
+            )
         except Exception as e:
             logger.exception("Failed to initialize speech module: %s", e)
             self.set_ready(False)

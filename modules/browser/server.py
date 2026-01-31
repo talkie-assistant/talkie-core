@@ -152,16 +152,20 @@ def main() -> None:
     args = parser.parse_args()
 
     # Load config
-    from config import load_config
+    from config import load_config, resolve_internal_service_url
 
     config = load_config()
+    consul_cfg = (config.get("infrastructure") or {}).get("consul") or {}
 
-    # Create Ollama client for intent parsing
+    # Create Ollama client for intent parsing (resolve via Consul if *.service.consul)
     ollama_cfg = config.get("ollama", {})
+    base_url = resolve_internal_service_url(
+        ollama_cfg.get("base_url", "http://localhost:11434"), consul_cfg
+    )
     from llm.client import OllamaClient
 
     ollama_client = OllamaClient(
-        base_url=ollama_cfg.get("base_url", "http://localhost:11434"),
+        base_url=base_url,
         model_name=ollama_cfg.get("model_name", "mistral"),
         options=ollama_cfg.get("options"),
     )

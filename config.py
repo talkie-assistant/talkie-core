@@ -84,6 +84,25 @@ def load_config() -> dict:
     return merged
 
 
+def resolve_internal_service_url(url: str, consul_config: dict) -> str:
+    """
+    If url contains *.service.consul, resolve it via Consul (authoritative name
+    server for internal services). Otherwise return url unchanged.
+    """
+    if not url or ".service.consul" not in (url or "").lower():
+        return url
+    if not consul_config or not consul_config.get("enabled", True):
+        return url
+    try:
+        from modules.api.consul_client import resolve_url_via_consul
+
+        host = str(consul_config.get("host", "localhost"))
+        port = int(consul_config.get("port", 8500))
+        return resolve_url_via_consul(url, host, port)
+    except Exception:
+        return url
+
+
 class AppConfig:
     """
     Wraps the raw YAML config dict. Use get_* for typed access with defaults;
@@ -103,8 +122,8 @@ class AppConfig:
         return str(self.get("logging", {}).get("level", "DEBUG"))
 
     def get_log_path(self) -> str | None:
-        """Path for log file (root logger). None = no file output."""
-        return self.get("logging", {}).get("file")
+        """Path for log file (root logger). Default talkie.log."""
+        return self.get("logging", {}).get("file", "talkie.log")
 
     def get_db_path(self) -> str:
         return str(self.get("persistence", {}).get("db_path", "data/talkie.db"))
@@ -149,3 +168,10 @@ class AppConfig:
     def get_load_balancing_config(self) -> dict:
         """Load balancing configuration."""
         return self.get_infrastructure_config().get("load_balancing") or {}
+
+    def resolve_internal_service_url(self, url: str) -> str:
+        """
+        If url contains *.service.consul, resolve it via Consul (authoritative
+        name server for internal services). Otherwise return url unchanged.
+        """
+        return resolve_internal_service_url(url, self.get_consul_config())

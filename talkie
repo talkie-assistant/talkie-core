@@ -61,8 +61,22 @@ init_compose() {
     check_podman_compose
 }
 
-# Single compose service names (for: ./talkie start haproxy, etc.)
-COMPOSE_SERVICES="consul-server keydb haproxy ollama chroma speech rag browser healthbeat"
+# Ensure talkie network exists (matches compose.yaml: subnet 172.30.0.0/24, labels for Docker Compose)
+ensure_talkie_network() {
+    if ! podman network exists talkie_talkie-network 2>/dev/null; then
+        log_info "Creating talkie network (talkie_talkie-network)..."
+        podman network create \
+            --driver bridge \
+            --subnet 172.30.0.0/24 \
+            --label com.docker.compose.project=talkie \
+            --label com.docker.compose.network=talkie-network \
+            --label io.podman.compose.project=talkie \
+            talkie_talkie-network
+    fi
+}
+
+# Single compose service names (for: ./talkie start haproxy, etc.). Ollama disabled (use local ollama serve).
+COMPOSE_SERVICES="consul-server keydb haproxy chroma speech rag browser healthbeat"
 
 # Start services
 cmd_start() {
@@ -77,7 +91,10 @@ cmd_start() {
         if [ "$services" = "$svc" ]; then
             init_compose
             log_info "Starting $services..."
-            $COMPOSE_CMD up -d "$services"
+            if ! $COMPOSE_CMD up -d "$services"; then
+                log_info "Starting existing container talkie-$services..."
+                podman start "talkie-$services" || { log_error "Failed to start talkie-$services"; return 1; }
+            fi
             return
         fi
     done
@@ -85,29 +102,35 @@ cmd_start() {
     init_compose
     log_info "Starting Talkie services..."
 
-    if [ "$services" = "all" ] || [ "$services" = "infrastructure" ]; then
-        log_info "Starting infrastructure services..."
-        $COMPOSE_CMD up -d consul-server keydb haproxy
-        sleep 2
-    fi
-
-    if [ "$services" = "all" ] || [ "$services" = "core" ]; then
-        log_info "Starting core services (Ollama, Chroma)..."
-        $COMPOSE_CMD up -d ollama chroma
-        sleep 2
-    fi
-
-    if [ "$services" = "all" ] || [ "$services" = "modules" ]; then
-        log_info "Starting module servers..."
-        $COMPOSE_CMD up -d speech rag browser healthbeat
-        sleep 2
-    fi
-
     if [ "$services" = "all" ]; then
+        ensure_talkie_network
+        if ! $COMPOSE_CMD up -d consul-server keydb haproxy chroma speech rag browser healthbeat; then
+            log_info "Recreating network and retrying..."
+            for c in talkie-consul-server talkie-keydb talkie-haproxy talkie-chroma talkie-speech talkie-rag talkie-browser talkie-healthbeat; do
+                podman stop "$c" 2>/dev/null || true
+            done
+            podman network rm talkie_talkie-network 2>/dev/null || true
+            sleep 1
+            $COMPOSE_CMD up -d consul-server keydb haproxy chroma speech rag browser healthbeat
+        fi
         log_info "Starting Web UI (background)..."
         cmd_web_start
         log_info "All services started"
         cmd_status
+    elif [ "$services" = "core" ]; then
+        log_info "Starting core services (Chroma; Ollama is local)..."
+        $COMPOSE_CMD up -d chroma
+    elif [ "$services" = "modules" ]; then
+        log_info "Starting module servers..."
+        $COMPOSE_CMD up -d speech rag browser healthbeat
+    fi
+
+    if [ "$services" = "all" ]; then
+        :
+    elif [ "$services" = "core" ] || [ "$services" = "modules" ]; then
+        log_info "Services started"
+    else
+        log_warn "Unknown target: $services. Use: all, core, modules, or a service name (e.g. consul-server, keydb, haproxy)."
     fi
 }
 
@@ -144,12 +167,14 @@ cmd_stop() {
 
     if [ "$services" = "all" ] || [ "$services" = "core" ]; then
         log_info "Stopping core services..."
-        $COMPOSE_CMD stop ollama chroma 2>/dev/null || true
+        $COMPOSE_CMD stop chroma 2>/dev/null || true
     fi
 
-    if [ "$services" = "all" ] || [ "$services" = "infrastructure" ]; then
+    if [ "$services" = "all" ]; then
         log_info "Stopping infrastructure services..."
-        $COMPOSE_CMD stop consul-server keydb haproxy 2>/dev/null || true
+        for svc in consul-server keydb haproxy; do
+            $COMPOSE_CMD stop "$svc" 2>/dev/null || true
+        done
     fi
 
     log_info "Services stopped"
@@ -170,7 +195,11 @@ cmd_restart() {
         if [ "$services" = "$svc" ]; then
             init_compose
             log_info "Restarting $services..."
-            $COMPOSE_CMD restart "$services" 2>/dev/null || true
+            if ! $COMPOSE_CMD restart "$services" 2>/dev/null; then
+                log_info "Restarting existing container talkie-$services..."
+                podman stop "talkie-$services" 2>/dev/null || true
+                podman start "talkie-$services" || { log_error "Failed to restart talkie-$services"; return 1; }
+            fi
             return
         fi
     done
@@ -185,16 +214,15 @@ cmd_restart() {
         return
     fi
 
-    # infrastructure | core | modules
+    # core | modules (or unknown target)
     init_compose
     cmd_stop "$services"
     sleep 1
     cmd_start "$services"
 }
 
-# Web server PID/log files
+# Web server PID file (logs go to talkie.log via app config)
 WEB_PID_FILE="$SCRIPT_DIR/.talkie-web.pid"
-WEB_LOG_FILE="$SCRIPT_DIR/.talkie-web.log"
 
 cmd_web_start() {
     if [ -f "$WEB_PID_FILE" ]; then
@@ -217,12 +245,12 @@ cmd_web_start() {
         fi
     fi
     log_info "Starting Talkie Web UI..."
-    ( cd "$SCRIPT_DIR" && nohup pipenv run python run_web.py >> "$WEB_LOG_FILE" 2>&1 & echo $! > "$WEB_PID_FILE" )
+    ( cd "$SCRIPT_DIR" && nohup pipenv run python run_web.py >> talkie.log 2>&1 & echo $! > "$WEB_PID_FILE" )
     sleep 1
     if [ -f "$WEB_PID_FILE" ] && kill -0 "$(cat "$WEB_PID_FILE")" 2>/dev/null; then
         log_info "Web UI started (PID $(cat "$WEB_PID_FILE")). http://localhost:8765"
     else
-        log_error "Web UI failed to start. Check $WEB_LOG_FILE"
+        log_error "Web UI failed to start. Check talkie.log"
         rm -f "$WEB_PID_FILE"
         exit 1
     fi
@@ -267,7 +295,7 @@ cmd_web_status() {
             if web_port_listening; then
                 echo -e "Web UI: ${GREEN}running${NC} (PID $pid, port 8765). http://localhost:8765"
             else
-                echo -e "Web UI: process running (PID $pid) but ${YELLOW}port 8765 not listening${NC}. Check $WEB_LOG_FILE"
+                echo -e "Web UI: process running (PID $pid) but ${YELLOW}port 8765 not listening${NC}. Check talkie.log"
             fi
         else
             echo -e "Web UI: ${RED}stopped${NC} (stale PID file removed)"
@@ -368,27 +396,52 @@ app_setup_data_dir() {
     fi
 }
 
-app_check_ollama_models() {
-    log_info "Checking Ollama models..."
-    if ! is_container_running "talkie-ollama"; then
-        log_warn "Ollama container not running. Starting it..."
-        $COMPOSE_CMD up -d ollama
-        sleep 5
-    else
-        local health_status
-        health_status=$(podman inspect --format='{{.State.Health.Status}}' "talkie-ollama" 2>/dev/null || echo "none")
-        if [ "$health_status" = "unhealthy" ]; then
-            $COMPOSE_CMD restart ollama
-            sleep 5
-        elif ! curl -s -f http://localhost:11434/api/tags > /dev/null 2>&1; then
-            if [ "$health_status" != "healthy" ]; then sleep 5; else $COMPOSE_CMD restart ollama; sleep 5; fi
-        fi
+# Register chroma (and optionally ollama) with Consul so *.service.consul resolves. Ollama disabled (local).
+app_register_consul_services() {
+    if ! is_container_running "talkie-consul-server"; then
+        return
     fi
+    local consul_addr="http://localhost:8500"
+    if ! curl -s -f "${consul_addr}/v1/status/leader" > /dev/null 2>&1; then
+        log_debug "Consul not reachable; skipping service registration"
+        return
+    fi
+    for name in chroma; do
+        local cid port
+        case "$name" in
+            chroma) cid="talkie-chroma"; port=8000 ;;
+            *) continue ;;
+        esac
+        if ! is_container_running "$cid"; then
+            continue
+        fi
+        local ip
+        ip=$(podman inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$cid" 2>/dev/null | head -1)
+        if [ -z "$ip" ]; then
+            ip=$(podman inspect --format '{{.NetworkSettings.IPAddress}}' "$cid" 2>/dev/null)
+        fi
+        if [ -z "$ip" ]; then
+            log_debug "Could not get IP for $cid; skipping Consul registration"
+            continue
+        fi
+        local payload
+        payload=$(printf '{"ID":"%s-1","Name":"%s","Address":"%s","Port":%s}' "$name" "$name" "$ip" "$port")
+        if curl -s -X PUT -d "$payload" "${consul_addr}/v1/agent/service/register" > /dev/null 2>&1; then
+            log_debug "Registered $name with Consul at $ip:$port"
+        else
+            log_debug "Consul registration failed for $name"
+        fi
+    done
+}
+
+# Check local Ollama (no Podman container). Ensure model is available and warm up.
+app_check_ollama_models() {
+    log_info "Checking local Ollama..."
     if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-        log_info "Waiting for Ollama..."
+        log_info "Waiting for Ollama (run: ollama serve)..."
         sleep 10
         if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-            log_error "Ollama not responding. Check: podman logs talkie-ollama"
+            log_error "Ollama not responding at http://localhost:11434. Run: ollama serve"
             exit 1
         fi
     fi
@@ -398,8 +451,8 @@ app_check_ollama_models() {
     MODELS_JSON=$(curl -s http://localhost:11434/api/tags 2>/dev/null || echo "{}")
     MODELS=$(echo "$MODELS_JSON" | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || echo "")
     if ! echo "$MODELS" | grep -qE "^${DEFAULT_MODEL}(:|$)"; then
-        log_info "Pulling model '$DEFAULT_MODEL'..."
-        podman exec talkie-ollama ollama pull "$DEFAULT_MODEL"
+        log_info "Pulling model '$DEFAULT_MODEL' (local ollama)..."
+        ollama pull "$DEFAULT_MODEL" || { log_warn "ollama pull failed; ensure ollama is on PATH"; }
         MODELS_JSON=$(curl -s http://localhost:11434/api/tags 2>/dev/null || echo "{}")
         MODELS=$(echo "$MODELS_JSON" | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || echo "")
     fi
@@ -414,8 +467,8 @@ app_check_ollama_models() {
         local EMBED_MODEL
         EMBED_MODEL=$(grep -E "^\s*embedding_model:" config.yaml | head -1 | sed 's/.*embedding_model:\s*\([^ ]*\).*/\1/' | tr -d '"' || echo "")
         if [ -n "$EMBED_MODEL" ] && ! echo "$MODELS" | grep -qE "^${EMBED_MODEL}(:|$)"; then
-            log_info "Pulling embedding model '$EMBED_MODEL'..."
-            podman exec talkie-ollama ollama pull "$EMBED_MODEL"
+            log_info "Pulling embedding model '$EMBED_MODEL' (local ollama)..."
+            ollama pull "$EMBED_MODEL" || true
         fi
     fi
 }
@@ -444,6 +497,7 @@ cmd_app() {
         if ! is_container_running "talkie-$sn"; then NEED_INFRA=true; break; fi
     done
     if [ "$NEED_INFRA" = true ]; then
+        ensure_talkie_network
         $COMPOSE_CMD up -d "${INFRA_SERVICES[@]}"
         log_info "Waiting for infrastructure (20s)..."
         sleep 20
@@ -451,8 +505,8 @@ cmd_app() {
     app_health_check_service "Consul" "talkie-consul-server" "http://localhost:8500/v1/status/leader" || log_warn "Consul health check failed"
     is_container_running "talkie-keydb" && podman exec talkie-keydb keydb-cli ping > /dev/null 2>&1 && log_info "KeyDB is ready" || log_warn "KeyDB failed"
     app_health_check_service "HAProxy" "talkie-haproxy" "http://localhost:8404/" || log_warn "HAProxy health check failed"
-    log_info "Ensuring application services (Ollama, Chroma)..."
-    local APP_SERVICES=(ollama chroma)
+    log_info "Ensuring application services (Chroma; Ollama is local)..."
+    local APP_SERVICES=(chroma)
     local NEED_APP=false
     for sn in "${APP_SERVICES[@]}"; do
         if ! is_container_running "talkie-$sn"; then NEED_APP=true; break; fi
@@ -462,8 +516,13 @@ cmd_app() {
         log_info "Waiting for application services (20s)..."
         sleep 20
     fi
-    app_health_check_service "Ollama" "talkie-ollama" "http://localhost:11434/api/tags" || log_warn "Ollama health check failed"
+    if curl -s -f http://localhost:11434/api/tags > /dev/null 2>&1; then
+        log_info "Ollama (local) is healthy"
+    else
+        log_warn "Ollama not responding at localhost:11434. Run: ollama serve"
+    fi
     app_health_check_service "Chroma" "talkie-chroma" "http://localhost:8000/api/v1" || log_warn "Chroma may still be starting"
+    app_register_consul_services
     if [ "$LOCAL_ONLY" -eq 0 ]; then
         log_info "Checking module servers..."
         local MODULE_SERVICES=("speech:talkie-speech:http://localhost:8001/health" "rag:talkie-rag:http://localhost:8002/health" "browser:talkie-browser:http://localhost:8003/health")
@@ -496,7 +555,7 @@ cmd_logs() {
     if [ -z "$service" ]; then
         log_info "Available services:"
         echo "  Infrastructure: consul-server, keydb, haproxy"
-        echo "  Core: ollama, chroma"
+        echo "  Core: chroma (Ollama is local)"
         echo "  Modules: speech, rag, browser, healthbeat"
         echo ""
         echo "Usage: ./talkie logs <service> [--follow]"
@@ -511,49 +570,114 @@ cmd_logs() {
     fi
 }
 
-# Status check
+# Status and health (combined)
 cmd_status() {
     init_compose
     
-    log_info "Talkie service status:"
+    log_info "Talkie service status and health:"
     echo ""
     
-    # Check infrastructure
+    # Capture consul state once (container running + API reachable). Use 127.0.0.1 for curl to avoid IPv6/localhost quirks on macOS.
+    _consul_running=0
+    _consul_healthy=0
+    if podman ps --format "{{.Names}}" 2>/dev/null | grep -q "^talkie-consul-server$"; then
+        _consul_running=1
+        for _ in 1 2 3; do
+            if curl -s -m 3 http://127.0.0.1:8500/v1/status/leader > /dev/null 2>&1; then
+                _consul_healthy=1
+                break
+            fi
+            sleep 1
+        done
+    fi
+
+    # Infrastructure (running + health)
     echo "Infrastructure:"
-    for service in consul-server keydb haproxy; do
-        if podman ps --format "{{.Names}}" | grep -q "^talkie-$service$"; then
-            echo -e "  ${GREEN}✓${NC} $service (running)"
+    if [ "$_consul_running" -eq 1 ]; then
+        if [ "$_consul_healthy" -eq 1 ]; then
+            echo -e "  ${GREEN}✓${NC} consul-server (running, healthy)"
         else
-            echo -e "  ${RED}✗${NC} $service (stopped)"
+            echo -e "  ${YELLOW}!${NC} consul-server (running, not responding)"
         fi
-    done
+    else
+        echo -e "  ${RED}✗${NC} consul-server (stopped)"
+    fi
+    if podman ps --format "{{.Names}}" | grep -q "^talkie-keydb$"; then
+        if podman exec talkie-keydb keydb-cli ping > /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} keydb (running, healthy)"
+        else
+            echo -e "  ${YELLOW}!${NC} keydb (running, not responding)"
+        fi
+    else
+        echo -e "  ${RED}✗${NC} keydb (stopped)"
+    fi
+    if podman ps --format "{{.Names}}" | grep -q "^talkie-haproxy$"; then
+        if curl -s http://localhost:8404 > /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} haproxy (running, healthy)"
+        else
+            echo -e "  ${YELLOW}!${NC} haproxy (running, not responding)"
+        fi
+    else
+        echo -e "  ${RED}✗${NC} haproxy (stopped)"
+    fi
 
     echo ""
     echo "Core services:"
-    for service in ollama chroma; do
-        if podman ps --format "{{.Names}}" | grep -q "^talkie-$service$"; then
-            echo -e "  ${GREEN}✓${NC} $service (running)"
+    if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} ollama (local, healthy)"
+    else
+        echo -e "  ${RED}✗${NC} ollama (local, not running - run: ollama serve)"
+    fi
+    if podman ps --format "{{.Names}}" | grep -q "^talkie-chroma$"; then
+        if curl -s http://localhost:8000/api/v1/heartbeat > /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} chroma (running, healthy)"
         else
-            echo -e "  ${RED}✗${NC} $service (stopped)"
+            echo -e "  ${YELLOW}!${NC} chroma (running, not responding)"
         fi
-    done
+    else
+        echo -e "  ${RED}✗${NC} chroma (stopped)"
+    fi
 
     echo ""
     echo "Module servers:"
-    for service in speech rag browser healthbeat; do
+    for entry in "speech:8001" "rag:8002" "browser:8003"; do
+        service="${entry%%:*}"
+        port="${entry##*:}"
         if podman ps --format "{{.Names}}" | grep -q "^talkie-$service$"; then
-            echo -e "  ${GREEN}✓${NC} $service (running)"
+            if curl -s "http://localhost:$port/health" > /dev/null 2>&1; then
+                echo -e "  ${GREEN}✓${NC} $service (running, healthy)"
+            else
+                echo -e "  ${YELLOW}!${NC} $service (running, not responding)"
+            fi
         else
             echo -e "  ${RED}✗${NC} $service (stopped)"
         fi
     done
+    if podman ps --format "{{.Names}}" | grep -q "^talkie-healthbeat$"; then
+        echo -e "  ${GREEN}✓${NC} healthbeat (running)"
+    else
+        echo -e "  ${RED}✗${NC} healthbeat (stopped)"
+    fi
 
     echo ""
     echo "Service URLs:"
     echo "  Talkie Web UI: http://localhost:8765"
-    echo "  Consul UI: http://localhost:8500/ui"
-    echo "  HAProxy Stats: http://localhost:8404"
-    echo "  HAProxy: http://localhost:8080"
+    if [ "$_consul_running" -eq 1 ]; then
+        if [ "$_consul_healthy" -eq 1 ]; then
+            echo "  Consul UI: http://127.0.0.1:8500/ui"
+        else
+            echo -e "  Consul UI: http://127.0.0.1:8500/ui ${YELLOW}(container running, API not responding)${NC}"
+        fi
+    else
+        echo -e "  Consul UI: ${YELLOW}(not running)${NC} http://127.0.0.1:8500/ui  -- start: ./talkie start"
+    fi
+    if podman ps --format "{{.Names}}" | grep -q "^talkie-haproxy$"; then
+        echo "  HAProxy Stats: http://localhost:8404"
+        echo "  HAProxy: http://localhost:8080"
+    else
+        echo -e "  HAProxy Stats: ${YELLOW}(not running)${NC} http://localhost:8404  -- start: ./talkie start"
+        echo -e "  HAProxy: ${YELLOW}(not running)${NC} http://localhost:8080"
+    fi
 }
 
 # List containers
@@ -677,55 +801,6 @@ cmd_clean() {
     esac
 }
 
-# Health check
-cmd_health() {
-    log_info "Checking service health..."
-    
-    # Check Consul
-    if curl -s http://localhost:8500/v1/status/leader > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✓${NC} Consul: healthy"
-    else
-        echo -e "  ${RED}✗${NC} Consul: not responding"
-    fi
-    
-    # Check KeyDB
-    if podman exec talkie-keydb keydb-cli ping > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✓${NC} KeyDB: healthy"
-    else
-        echo -e "  ${RED}✗${NC} KeyDB: not responding"
-    fi
-    
-    # Check HAProxy
-    if curl -s http://localhost:8404 > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✓${NC} HAProxy: healthy"
-    else
-        echo -e "  ${RED}✗${NC} HAProxy: not responding"
-    fi
-    
-    # Check Ollama
-    if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✓${NC} Ollama: healthy"
-    else
-        echo -e "  ${RED}✗${NC} Ollama: not responding"
-    fi
-    
-    # Check Chroma
-    if curl -s http://localhost:8000/api/v1/heartbeat > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✓${NC} Chroma: healthy"
-    else
-        echo -e "  ${RED}✗${NC} Chroma: not responding"
-    fi
-    
-    # Check module servers (speech=8001, rag=8002, browser=8003)
-    for port in 8001 8002 8003; do
-        if curl -s "http://localhost:$port/health" > /dev/null 2>&1; then
-            echo -e "  ${GREEN}✓${NC} Module server on port $port: healthy"
-        else
-            echo -e "  ${YELLOW}!${NC} Module server on port $port: not responding (may not be started)"
-        fi
-    done
-}
-
 # Show usage
 usage() {
     cat << EOF
@@ -735,12 +810,11 @@ Usage: ./talkie <command> [options]
 
 Commands:
   start [target]
-        Start services (default: all). Target: all, infrastructure, core, modules,
-        web, or a single service (consul-server, keydb, haproxy, ollama, chroma,
-        speech, rag, browser, healthbeat).
-        - all: infrastructure + core + modules + Web UI (http://localhost:8765)
-        - infrastructure: Consul, KeyDB, HAProxy
-        - core: Ollama, Chroma
+        Start services (default: all). Target: all, core, modules, web, or a
+        single service (consul-server, keydb, haproxy, chroma, speech, rag,
+        browser, healthbeat).
+        - all: consul + keydb + haproxy + chroma + modules + Web UI (http://localhost:8765)
+        - core: Chroma only (Ollama is local - run: ollama serve)
         - modules: speech, rag, browser, healthbeat
         - web: Web UI only (run_web.py, port 8765)
 
@@ -751,7 +825,7 @@ Commands:
         Restart services (default: all). Same targets as start.
 
   status [web]
-        Show status. No argument: all containers. With web: Web UI only.
+        Show status and health. No argument: all services + health checks. With web: Web UI only.
 
   app [--local-only]
         Bring up container services then run the Web UI (foreground).
@@ -763,16 +837,12 @@ Commands:
         Rebuilds the module image if needed and restarts only affected module containers
         (speech, rag, browser, healthbeat). Main app changes are reported only.
 
-  status  Show status of all services
-
   ps      List running containers
 
   logs <service> [--follow]
         View logs for a service
         Use --follow or -f to follow logs
         Example: ./talkie logs consul-server --follow
-
-  health  Check health of all services
 
   clean [containers|volumes|all]
         Clean up resources
@@ -788,12 +858,11 @@ Examples:
   ./talkie restart haproxy           # Restart HAProxy only
   ./talkie restart web               # Restart Web UI only
   ./talkie stop web                  # Stop Web UI
-  ./talkie status                    # All containers
+  ./talkie status                    # Status and health of all services
   ./talkie status web                # Web UI only
   ./talkie app                      # Start services + Web UI (foreground)
   ./talkie app --local-only         # Start Web UI only (no module containers)
   ./talkie logs consul-server -f   # Follow Consul logs
-  ./talkie health                   # Check service health
   ./talkie restart-changed          # Restart only containers whose code changed
   ./talkie clean containers         # Clean up containers
 
@@ -833,9 +902,6 @@ main() {
             ;;
         ps)
             cmd_ps
-            ;;
-        health)
-            cmd_health
             ;;
         clean)
             cmd_clean "${1:-containers}"

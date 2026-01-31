@@ -396,7 +396,7 @@
           <tr><th>History rows</th><td>Click or <kbd>Enter</kbd>/<kbd>Space</kbd> to select row for correction</td></tr>
           <tr><th>Status bar</th><td>Refresh icon: reconnect WebSocket when disconnected</td></tr>
           <tr><th>Modules</th><td>Speech, Web, RAG: enable after connecting to server</td></tr>
-          <tr><th>Server not connecting?</th><td>Run <code>./talkie start web</code>, open <a href="http://127.0.0.1:8765">http://127.0.0.1:8765</a>, then use the status bar refresh. Check <code>.talkie-web.log</code> if it still fails.</td></tr>
+          <tr><th>Server not connecting?</th><td>Run <code>./talkie start web</code>, open <a href="http://127.0.0.1:8765">http://127.0.0.1:8765</a>, then use the status bar refresh. Check <code>talkie.log</code> if it still fails.</td></tr>
         </tbody>
       </table>
       <button type="button" id="helpClose" class="help-close">Close</button>
@@ -454,6 +454,7 @@
 
   <div id="panel-settings" class="panel">
     <div class="form-row"><label>User context (optional)</label><textarea id="settingsUserContext" placeholder="e.g. PhD, ex-tenured professor..."></textarea></div>
+    <div class="form-row"><label>Voice Gender</label><select id="settingsVoiceFilter"><option value="">Any</option><option value="male">Male</option><option value="female">Female</option></select></div>
     <div class="form-row"><label>TTS voice</label><select id="settingsVoice"></select></div>
     <button type="button" id="settingsSave">Save</button>
   </div>
@@ -899,16 +900,32 @@
       function loadSettings() {
         api('/api/settings').then(function (data) {
           document.getElementById('settingsUserContext').value = data.user_context || '';
+          const voiceFilter = data.tts_voice_filter || '';
+          const filterSel = document.getElementById('settingsVoiceFilter');
+          if (filterSel) filterSel.value = voiceFilter;
           const voice = data.tts_voice || 'Daniel';
           api('/api/settings/voices').then(function (vdata) {
+            var raw = vdata.voices || [{ name: 'Daniel', gender: 'male' }];
+            raw = raw.map(function (v) { return typeof v === 'string' ? { name: v, gender: 'unknown' } : (v || { name: 'Daniel', gender: 'male' }); });
+            const filter = (filterSel && filterSel.value) ? filterSel.value : '';
+            const filtered = raw.filter(function (v) {
+              const g = (v && v.gender) ? v.gender : 'unknown';
+              if (filter === 'male') return g === 'male';
+              if (filter === 'female') return g === 'female';
+              return true;
+            });
+            const names = filtered.map(function (v) { return (v && v.name) ? v.name : v; });
+            if (names.length === 0) names.push('Daniel');
             const sel = document.getElementById('settingsVoice');
             sel.innerHTML = '';
-            (vdata.voices || ['Daniel']).forEach(function (v) {
-              const opt = document.createElement('option'); opt.value = v; opt.textContent = v; if (v === voice) opt.selected = true; sel.appendChild(opt);
+            names.forEach(function (n) {
+              const opt = document.createElement('option'); opt.value = n; opt.textContent = n; if (n === voice) opt.selected = true; sel.appendChild(opt);
             });
+            if (!names.includes(voice)) { sel.value = names[0]; }
             if (typeof window.speechSynthesis !== 'undefined') {
               const voices = window.speechSynthesis.getVoices();
-              const v = voices.find(function (x) { return x.name === voice; }) || voices.find(function (x) { return x.name.indexOf(voice) >= 0; });
+              const chosen = sel.value || voice;
+              const v = voices.find(function (x) { return x.name === chosen; }) || voices.find(function (x) { return x.name.indexOf(chosen) >= 0; });
               window.ttsVoice = v || null;
             }
           });
@@ -917,7 +934,8 @@
       document.getElementById('settingsSave').addEventListener('click', function () {
         const user_context = document.getElementById('settingsUserContext').value;
         const tts_voice = document.getElementById('settingsVoice').value;
-        api('/api/settings', { method: 'PUT', body: JSON.stringify({ user_context: user_context, tts_voice: tts_voice }) }).then(function () {
+        const tts_voice_filter = (document.getElementById('settingsVoiceFilter') && document.getElementById('settingsVoiceFilter').value) || '';
+        api('/api/settings', { method: 'PUT', body: JSON.stringify({ user_context: user_context, tts_voice: tts_voice, tts_voice_filter: tts_voice_filter }) }).then(function () {
           if (typeof window.speechSynthesis !== 'undefined') {
             const voices = window.speechSynthesis.getVoices();
             const v = voices.find(function (x) { return x.name === tts_voice; }) || voices.find(function (x) { return x.name.indexOf(tts_voice) >= 0; });
@@ -925,6 +943,39 @@
           }
         });
       });
+      (function () {
+        var filterEl = document.getElementById('settingsVoiceFilter');
+        if (!filterEl) return;
+        filterEl.addEventListener('change', function () {
+          api('/api/settings/voices').then(function (vdata) {
+            var raw = vdata.voices || [{ name: 'Daniel', gender: 'male' }];
+            raw = raw.map(function (v) { return typeof v === 'string' ? { name: v, gender: 'unknown' } : (v || { name: 'Daniel', gender: 'male' }); });
+            var filter = filterEl.value || '';
+            var filtered = raw.filter(function (v) {
+              var g = (v && v.gender) ? v.gender : 'unknown';
+              if (filter === 'male') return g === 'male';
+              if (filter === 'female') return g === 'female';
+              return true;
+            });
+            var names = filtered.map(function (v) { return (v && v.name) ? v.name : v; });
+            if (names.length === 0) names.push('Daniel');
+            var sel = document.getElementById('settingsVoice');
+            if (!sel) return;
+            var current = sel.value;
+            sel.innerHTML = '';
+            names.forEach(function (n) {
+              var opt = document.createElement('option'); opt.value = n; opt.textContent = n; sel.appendChild(opt);
+            });
+            sel.value = names.indexOf(current) >= 0 ? current : names[0];
+            if (typeof window.speechSynthesis !== 'undefined') {
+              var chosen = sel.value;
+              var voices = window.speechSynthesis.getVoices();
+              var v = voices.find(function (x) { return x.name === chosen; }) || voices.find(function (x) { return x.name.indexOf(chosen) >= 0; });
+              window.ttsVoice = v || null;
+            }
+          });
+        });
+      })();
 
       function loadDocuments() {
         api('/api/documents').then(function (data) {

@@ -26,9 +26,11 @@ stt:
     model_path: "base"
 
 ollama:
+  # Local Ollama: run `ollama serve` on the host. base_url must be http://localhost:11434.
+  # (Podman Ollama service is disabled in compose.yaml and talkie script.)
   base_url: "http://localhost:11434"
-  # model_name: tinyllama = very small (~637 MiB); phi ~1.5 GiB; mistral ~4.5 GiB. Pull first: ollama pull tinyllama
-  model_name: "tinyllama"
+  # model_name: phi (~1.5 GiB); tinyllama ~637 MiB; mistral ~4.5 GiB. Pull first: ollama pull <name>
+  model_name: "phi"
   # timeout_sec: request timeout for /api/generate (default 45). Increase if Ollama is slow; decrease to fail faster.
   timeout_sec: 45
   # options: pass-through to Ollama /api/generate. Defaults (in code): num_predict 256, temperature 0.4 for full single-sentence replies. Override here to tune.
@@ -134,9 +136,11 @@ browser:
 
 logging:
   level: DEBUG   # DEBUG | INFO | WARNING | ERROR
-  file: "talkie_debug.log"   # app root relative; all logger output written here
+  file: "talkie.log"   # app root relative; all logger output written here
 
 # Infrastructure: Service Discovery and Caching
+# Consul is the authoritative name server for internal services (*.service.consul).
+# Containers use Consul DNS; the app resolves *.service.consul via Consul HTTP API.
 infrastructure:
   consul:
     enabled: true

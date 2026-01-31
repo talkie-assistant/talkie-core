@@ -1,4 +1,4 @@
-# Talkie services: Ollama and Chroma run in Podman/Docker containers
+# Talkie services: Chroma runs in Podman; Ollama disabled (use local ollama serve).
 # Infrastructure: Consul, KeyDB, HAProxy. Module servers: speech, rag, browser.
 #
 # The Talkie UI (main window) is NOT in a container; it runs locally.
@@ -9,38 +9,29 @@
 # Or: ./talkie start  (containers only; then run "pipenv run python run.py" or ./talkie app)
 services:
   # Application services
-  # Ollama: custom image pre-pulls OLLAMA_PRELOAD_MODELS on first start (match config.yaml ollama.model_name)
-  ollama:
-    build:
-      context: .
-      dockerfile: Dockerfile.ollama
-    image: talkie-ollama:latest
-    container_name: talkie-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    environment:
-      - OLLAMA_PRELOAD_MODELS=tinyllama
-    restart: unless-stopped
-    networks:
-      - talkie-network
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      start_period: 180s
-    # Optional: set environment for GPU support
-    # environment:
-    #   - NVIDIA_VISIBLE_DEVICES=all
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+  # Ollama: disabled; use local Ollama (run: ollama serve). Uncomment block below to use Podman Ollama.
+  # ollama:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.ollama
+  #   image: talkie-ollama:latest
+  #   container_name: talkie-ollama
+  #   ports:
+  #     - "11434:11434"
+  #   mem_limit: 8g
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   environment:
+  #     - OLLAMA_PRELOAD_MODELS=tinyllama
+  #   restart: unless-stopped
+  #   networks:
+  #     - talkie-network
+  #   healthcheck:
+  #     test: ["CMD", "ollama", "list"]
+  #     interval: 30s
+  #     timeout: 15s
+  #     retries: 5
+  #     start_period: 180s
 
   chroma:
     image: chromadb/chroma:latest
@@ -53,22 +44,33 @@ services:
     networks:
       - talkie-network
     depends_on:
-      - ollama
+      consul-server:
+        condition: service_started
+    # depends_on: ollama  # disabled; use local Ollama
 
   # Infrastructure: Service Discovery
   consul-server:
     image: hashicorp/consul:1.22
     container_name: talkie-consul-server
-    command: agent -server -ui -node=server-1 -bootstrap-expect=1 -client=0.0.0.0
+    # -ui last so it takes effect after config file merge; UI at http://localhost:8500/ui
+    command:
+      - agent
+      - -server
+      - -node=server-1
+      - -bootstrap-expect=1
+      - -client=0.0.0.0
+      - -config-file=/consul/config/consul.hcl
+      - -ui
     ports:
-      - "8500:8500"  # HTTP API
-      - "8600:8600/udp"  # DNS
+      - "8500:8500"  # HTTP API + UI
+      # DNS (port 8600) used by HAProxy resolvers; not published to host
     volumes:
       - consul_data:/consul/data
       - ./consul/consul.hcl:/consul/config/consul.hcl:ro
     restart: unless-stopped
     networks:
-      - talkie-network
+      talkie-network:
+        ipv4_address: 172.30.0.2
     healthcheck:
       test: ["CMD", "consul", "members"]
       interval: 10s
@@ -87,6 +89,9 @@ services:
     restart: unless-stopped
     networks:
       - talkie-network
+    depends_on:
+      consul-server:
+        condition: service_started
     command: ["keydb-server", "--appendonly", "yes"]
     healthcheck:
       test: ["CMD", "keydb-cli", "ping"]
@@ -99,6 +104,8 @@ services:
   haproxy:
     image: haproxy:latest
     container_name: talkie-haproxy
+    command: ["haproxy", "-W", "-db", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+    # Consul DNS is on 8600; HAProxy backends use resolvers consul (172.30.0.2:8600) in haproxy.cfg
     ports:
       - "8080:8080"  # HAProxy binds 8080 inside (rootless cannot bind 80)
       - "8443:443"  # External 8443, internal 443 (if SSL configured)
@@ -262,8 +269,8 @@ services:
         condition: service_healthy
       keydb:
         condition: service_healthy
-      ollama:
-        condition: service_started
+      # ollama:
+      #   condition: service_started  # disabled; use local Ollama
     environment:
       - CONSUL_HTTP_ADDR=consul-server:8500
       - KEYDB_HOST=keydb
@@ -297,9 +304,12 @@ services:
 networks:
   talkie-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 
 volumes:
-  ollama_data:
+  # ollama_data:  # used when Podman Ollama service is enabled
   chroma_data:
   consul_data:
   keydb_data:

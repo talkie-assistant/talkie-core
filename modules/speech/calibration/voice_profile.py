@@ -16,8 +16,9 @@ logger = logging.getLogger(__name__)
 
 # Minimum duration (seconds) of audio for a usable enrollment
 VOICE_ENROLLMENT_MIN_SEC = 3.0
-# Default similarity threshold: accept segment only if cosine sim >= this
-VOICE_PROFILE_SIMILARITY_THRESHOLD_DEFAULT = 0.75
+# Default similarity threshold: accept segment only if cosine sim >= this.
+# 0.62 balances accepting the enrolled user (mic/room variation) vs rejecting others and TTS echo.
+VOICE_PROFILE_SIMILARITY_THRESHOLD_DEFAULT = 0.62
 # Settings keys
 SETTINGS_KEY_EMBEDDING = "voice_profile_embedding"
 SETTINGS_KEY_THRESHOLD = "voice_profile_threshold"

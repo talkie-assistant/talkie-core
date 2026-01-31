@@ -14,7 +14,7 @@ ui_config {
 client_addr = "0.0.0.0"
 bind_addr = "0.0.0.0"
 
-# Ports
+# Ports: DNS on 8600 to avoid binding to 53 (requires root in rootless Podman)
 ports {
   http = 8500
   dns = 8600

@@ -164,6 +164,9 @@ class SpeechFactory:
 
         if is_voice_profile_available(self._settings_repo):
             sample_rate = int(self._audio_cfg.get("sample_rate", 16000))
+            logger.info(
+                "Using saved voice profile: only the calibrated speaker will be accepted"
+            )
             return VoiceProfileSpeakerFilter(
                 settings_repo=self._settings_repo,
                 sample_rate=sample_rate,
@@ -187,6 +190,9 @@ def create_speech_components(
     """
     Single entry point: build capture, STT, TTS, and speaker filter from config.
     Applies calibration overlay; returns SpeechComponents.
+    The speaker filter enforces the configured voice profile so the app only
+    listens to the calibrated speaker; used by all modules and entry points
+    (web, run, and remote speech server when it uses the same settings DB).
     If server mode is enabled, returns remote API clients instead.
     """
     # Check if server mode is enabled

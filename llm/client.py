@@ -120,9 +120,11 @@ class OllamaClient:
         self._debug(f"Ollama POST {url} model={model_for_api}")
 
         for attempt in range(self.max_retries + 1):
+            start = time.perf_counter()
             try:
                 r = requests.post(url, json=payload, timeout=self.timeout_sec)
-                self._debug(f"Ollama HTTP {r.status_code}")
+                elapsed = time.perf_counter() - start
+                self._debug(f"Ollama HTTP {r.status_code} ({elapsed:.2f}s)")
                 r.raise_for_status()
                 data = r.json()
                 reply = data.get("response")
@@ -132,6 +134,7 @@ class OllamaClient:
                 self._debug("Ollama response empty or invalid; returning fallback")
                 return FALLBACK_MESSAGE
             except requests.RequestException as e:
+                elapsed = time.perf_counter() - start
                 if (
                     hasattr(e, "response")
                     and e.response is not None
@@ -151,8 +154,13 @@ class OllamaClient:
                                 pass
                     except Exception:
                         pass
-                self._debug(f"Ollama error (attempt {attempt + 1}): {e}")
-                logger.warning("Ollama request attempt %d failed: %s", attempt + 1, e)
+                self._debug(f"Ollama error (attempt {attempt + 1}) after {elapsed:.2f}s: {e}")
+                logger.warning(
+                    "Ollama request attempt %d failed after %.2fs: %s",
+                    attempt + 1,
+                    elapsed,
+                    e,
+                )
                 if attempt < self.max_retries:
                     time.sleep(1.0)
                 else:
@@ -160,8 +168,9 @@ class OllamaClient:
                     self._debug("Ollama returning fallback after retries")
                     return FALLBACK_MESSAGE
             except Exception as e:
-                self._debug("Ollama error: %s" % e)
-                logger.exception("Ollama generate error: %s", e)
+                elapsed = time.perf_counter() - start
+                self._debug("Ollama error after %.2fs: %s" % (elapsed, e))
+                logger.exception("Ollama generate error after %.2fs: %s", elapsed, e)
                 return FALLBACK_MESSAGE
         self._debug("Ollama returning fallback (no successful attempt)")
         return FALLBACK_MESSAGE
