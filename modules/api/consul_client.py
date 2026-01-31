@@ -248,9 +248,7 @@ class ConsulClient:
             netloc = f"{address}:{port}" if port else address
             new_parsed = parsed._replace(netloc=netloc)
             resolved = urlunparse(new_parsed)
-            logger.debug(
-                "Consul: resolved %s -> %s", url, resolved
-            )
+            logger.debug("Consul: resolved %s -> %s", url, resolved)
             return resolved
         except Exception as e:
             logger.debug("Consul: resolve %s failed: %s", url, e)

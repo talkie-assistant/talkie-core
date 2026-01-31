@@ -15,6 +15,17 @@ from .base import STTEngine
 logger = logging.getLogger(__name__)
 
 
+def ensure_whisper_model_downloaded(model_path: str = "base") -> None:
+    """
+    Download the Whisper model if not already cached (synchronous).
+    No-op if the model is already present in the Hugging Face cache.
+    Use from ./talkie download so first speech use does not block on network.
+    """
+    from faster_whisper import WhisperModel
+
+    WhisperModel(model_path, device="cpu", compute_type="int8")
+
+
 def _resolve_device(device: str) -> tuple[str, str]:
     """Return (device, compute_type). device is 'cpu' or 'cuda'."""
     want = (device or "cpu").strip().lower()

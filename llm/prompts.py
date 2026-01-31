@@ -13,12 +13,13 @@ DEFAULT_SYSTEM_BASE = """You assist a speech-impaired user in conversation. You 
 DEFAULT_USER_PROMPT_TEMPLATE = "Current phrase to respond to (output one sentence for this phrase only): {transcription}"
 
 # Regeneration: raw STT output -> single sentence most likely reflecting user intent.
-DEFAULT_REGENERATION_SYSTEM = """You interpret raw speech-recognition output from a speech-impaired user. The text is often fragmented, misheard, or contains homophones (e.g. "hockey" for "I'm", "outlook" for "cat out"). Your job is to output exactly one sentence that has the highest probability of being what the user intended, as the user would say it to the person they are talking to (e.g. a caregiver). Use first person for statements about themselves (e.g. "I want water.", "My leg hurts.", "I'm cold."). For requests to the listener—asking them to do something—output the request as the user would say it (e.g. "Pass me the salt.", "Pass me the chicken.", "Could you turn off the light?"), not as first-person past tense ("I passed the salt" is wrong when they mean pass me the salt). If the user doesn't use "I" (or equivalent), or uses "you" or refers to the person they're asking, it's likely a question—output it as the question they would ask (e.g. "Do you have the time?", "Could you help?", "Are you coming?"). Output only that sentence—no preamble, no explanation. If the input is gibberish or unintelligible, output exactly: I didn't catch that."""
+DEFAULT_REGENERATION_SYSTEM = """You complete a speech-impaired user's partial utterance into exactly one natural sentence they meant to say. The input is often fragmented or misheard (e.g. "hockey" for "I'm"). Output only that one sentence as the user would say it to a caregiver—first person for statements ("I want water.", "My leg hurts."), direct requests ("Pass me the salt."), or the question they are asking ("Do you have the time?"). No explanation, no preamble, no description of the task. If the input is already a clear, complete sentence (e.g. "Test sentence.", "I want water.", "Hello."), output that same sentence with high certainty. Only if the input is truly unintelligible noise or gibberish, output exactly: I didn't catch that. Never use "I didn't catch that" for test phrases, greetings, or clear words."""
 
 # When requesting certainty, we append this to the system prompt so the model returns JSON.
-REGENERATION_JSON_SUFFIX = """ Output your reply as a single JSON object with exactly two keys: "sentence" (the sentence as above, or "I didn't catch that." if unintelligible) and "certainty" (0-100, your confidence that this sentence matches the user's intent). No other text, no markdown."""
+REGENERATION_JSON_SUFFIX = """ Output your reply as a single JSON object with exactly two keys: "sentence" (the one sentence as above, or "I didn't catch that." if unintelligible) and "certainty" (0-100). No other text, no markdown."""
 
-DEFAULT_REGENERATION_USER_TEMPLATE = "Raw speech recognition: {transcription}"
+# User prompt must clearly ask to complete the phrase, not describe "raw speech recognition" (which triggers meta-explanations).
+DEFAULT_REGENERATION_USER_TEMPLATE = "Complete this phrase into one sentence the user meant to say: {transcription}"
 
 DEFAULT_EXPORT_INSTRUCTION = "You assist a speech-impaired user. Turn their partial speech into one clear, complete sentence in first person (as the user speaking: I want..., I need...). Output only that sentence."
 
@@ -241,7 +242,9 @@ def strip_certainty_from_response(text: str) -> str:
 def parse_regeneration_response(raw: str) -> tuple[str, int | None]:
     """
     Parse the regeneration model output. If it is JSON with "sentence" and "certainty",
-    return (sentence, certainty 0-100). Otherwise return (raw.strip(), None).
+    return (sentence, certainty 0-100). Otherwise return (sentence_from_raw, None).
+    When JSON is missing, if raw contains "Sentence: X" (model echoing field name),
+    use X as the sentence so we don't speak "I didn't catch that" plus the real sentence.
     """
     if not raw or not raw.strip():
         return ("", None)
@@ -253,13 +256,11 @@ def parse_regeneration_response(raw: str) -> tuple[str, int | None]:
     try:
         data = json.loads(text)
         if not isinstance(data, dict):
-            return (strip_certainty_from_response(raw.strip()), None)
+            return (_fallback_sentence_from_raw(raw), None)
         sentence = data.get("sentence")
         if sentence is None:
-            return (strip_certainty_from_response(raw.strip()), None)
-        sentence = strip_certainty_from_response(
-            str(sentence).strip() or raw.strip()
-        )
+            return (_fallback_sentence_from_raw(raw), None)
+        sentence = strip_certainty_from_response(str(sentence).strip() or raw.strip())
         certainty = data.get("certainty")
         if certainty is None:
             return (sentence, None)
@@ -270,4 +271,32 @@ def parse_regeneration_response(raw: str) -> tuple[str, int | None]:
         except (TypeError, ValueError):
             return (sentence, None)
     except json.JSONDecodeError:
-        return (strip_certainty_from_response(raw.strip()), None)
+        return (_fallback_sentence_from_raw(raw), None)
+
+
+# Model sometimes echoes system-prompt rules; strip so we never speak "Never use... Output your reply as: ...".
+_OUTPUT_REPLY_AS_PATTERN = re.compile(
+    r"\s*Output your reply as:\s*[\"']([^\"']+)[\"']\s*\.?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _fallback_sentence_from_raw(raw: str) -> str:
+    """When regeneration returns non-JSON, extract sentence; prefer text after 'Sentence: ' or 'Output your reply as: \"X\"'."""
+    text = strip_certainty_from_response(raw.strip())
+    if not text:
+        return text
+    # Model sometimes echoes "Output your reply as: \"Test 123.\"" (meta-instruction); use the quoted sentence.
+    out_match = _OUTPUT_REPLY_AS_PATTERN.search(text)
+    if out_match:
+        return out_match.group(1).strip()
+    # Model sometimes echoes "Sentence: X" in plain text; use X so we don't speak "I didn't catch that. Sentence: X".
+    match = re.search(r"\bSentence:\s*(.+)$", text, re.IGNORECASE | re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    # If the reply is "I didn't catch that." followed by meta-instruction, strip the meta part so we don't speak it.
+    if re.match(r"^I didn't catch that\.?\s*", text, re.IGNORECASE):
+        rest = re.sub(r"^I didn't catch that\.?\s*", "", text, flags=re.IGNORECASE).strip()
+        if "never use" in rest.lower() or "output your reply as" in rest.lower():
+            return "I didn't catch that."
+    return text

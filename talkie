@@ -759,7 +759,7 @@ cmd_restart_changed() {
     log_info "Done. Restarted: $to_restart"
 }
 
-# Download assets (Vosk model, dirs; optional rifai PDFs)
+# Download assets (Vosk + Whisper models, dirs; optional rifai PDFs). Sync, only missing.
 VOSK_MODEL_NAME="vosk-model-small-en-us-0.15"
 VOSK_URL="https://alphacephei.com/vosk/models/${VOSK_MODEL_NAME}.zip"
 
@@ -767,6 +767,7 @@ cmd_download() {
     local do_rifai="${1:-}"
     log_info "Creating directories: models, downloads, data..."
     mkdir -p models downloads data
+    # Vosk: sync, only if missing
     if [ -d "models/${VOSK_MODEL_NAME}" ]; then
         log_info "Vosk model already present: models/${VOSK_MODEL_NAME}"
     else
@@ -779,6 +780,55 @@ cmd_download() {
         log_info "Extracting to models/${VOSK_MODEL_NAME}..."
         ( cd models && unzip -o -q "${VOSK_MODEL_NAME}.zip" && rm -f "${VOSK_MODEL_NAME}.zip" ) || { log_error "Unzip failed."; exit 1; }
         log_info "Vosk model ready: models/${VOSK_MODEL_NAME}"
+    fi
+    # Whisper: sync, only if not already cached (faster-whisper uses Hugging Face cache)
+    if (stt_engine=$(grep -E "^\s*engine:\s*" config.yaml 2>/dev/null | head -1); echo "$stt_engine" | grep -qi "whisper"); then
+        pipenv run python -c '
+import sys
+from pathlib import Path
+root = Path(".").resolve()
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+try:
+    from config import load_config
+    cfg = load_config()
+    stt = cfg.get("stt") or {}
+    if (stt.get("engine") or "vosk").lower() != "whisper":
+        sys.exit(0)
+    whisper_cfg = stt.get("whisper") or {}
+    model = (whisper_cfg.get("model_path") or "base").strip() or "base"
+    from modules.speech.stt.whisper_engine import ensure_whisper_model_downloaded
+    ensure_whisper_model_downloaded(model)
+    print("Whisper", model, "ready")
+except ImportError as e:
+    if "faster_whisper" in str(e):
+        sys.exit(2)
+    raise
+' 2>/dev/null
+        local ret=$?
+        if [ "$ret" -eq 0 ]; then
+            log_info "Whisper model ready (cached or downloaded)"
+        elif [ "$ret" -eq 2 ]; then
+            log_info "Whisper not installed (faster_whisper); skip. Use STT engine whisper to pre-download."
+        else
+            log_warn "Whisper model pre-download failed or skipped (check config and pipenv)."
+        fi
+    fi
+    # Ollama: sync pull/update default models (tinyllama, phi, nomic-embed-text) and config's model_name + embedding_model
+    if curl -s -f http://localhost:11434/api/tags >/dev/null 2>&1; then
+        local ollama_models="tinyllama phi nomic-embed-text"
+        local model_name embed_model
+        [ -f config.yaml ] && model_name=$(grep -E "^\s*model_name:" config.yaml | head -1 | sed 's/.*model_name:\s*\([^ ]*\).*/\1/' | tr -d '"')
+        [ -n "$model_name" ] && ollama_models="$ollama_models $model_name"
+        [ -f config.yaml ] && grep -q "embedding_model:" config.yaml && embed_model=$(grep -E "^\s*embedding_model:" config.yaml | head -1 | sed 's/.*embedding_model:\s*\([^ ]*\).*/\1/' | tr -d '"')
+        [ -n "$embed_model" ] && ollama_models="$ollama_models $embed_model"
+        for m in $(echo "$ollama_models" | tr ' ' '\n' | sort -u); do
+            [ -z "$m" ] && continue
+            log_info "Pulling/updating Ollama model '$m'..."
+            ollama pull "$m" || log_warn "ollama pull $m failed"
+        done
+    else
+        log_info "Ollama not running; skip. Run 'ollama serve' and re-run ./talkie download to pull/update models."
     fi
     if [ "$do_rifai" = "rifai" ] || [ "$do_rifai" = "--rifai" ]; then
         log_info "Running rifai_scholar_downloader (downloads/abdalla_rifai_publications_open_pdfs)..."
@@ -852,6 +902,7 @@ Commands:
 
   restart [target]
         Restart services (default: all). Same targets as start.
+        - restart changed [REF]: Restart/rebuild only services whose code changed (git diff vs REF, default HEAD).
 
   status [web]
         Show status and health. No argument: all services + health checks. With web: Web UI only.
@@ -861,11 +912,6 @@ Commands:
         - app: Web UI at http://localhost:8765
         - app --local-only: Skip module containers; app may start them as subprocesses
 
-  restart-changed [REF]
-        Restart only processes whose code has changed (git diff vs REF, default: HEAD).
-        Rebuilds the module image if needed and restarts only affected module containers
-        (speech, rag, browser, healthbeat). Main app changes are reported only.
-
   ps      List running containers
 
   logs <service> [--follow]
@@ -874,8 +920,8 @@ Commands:
         Example: ./talkie logs consul-server --follow
 
   download [rifai]
-        Fetch assets not in git (Vosk STT model to models/, create dirs).
-        - download: Vosk model only
+        Fetch assets not in git (sync, only missing). Creates models/, downloads/, data/.
+        - download: Vosk + Whisper (if config uses whisper) + Ollama models (tinyllama, phi, config model_name/embedding_model)
         - download rifai: also run rifai_scholar_downloader (PDFs to downloads/)
 
   clean [containers|volumes|all]
@@ -897,9 +943,9 @@ Examples:
   ./talkie app                      # Start services + Web UI (foreground)
   ./talkie app --local-only         # Start Web UI only (no module containers)
   ./talkie logs consul-server -f   # Follow Consul logs
-  ./talkie download                  # Fetch Vosk model to models/
-  ./talkie download rifai            # Vosk model + Scholar PDFs to downloads/
-  ./talkie restart-changed          # Restart only containers whose code changed
+  ./talkie download                  # Vosk + Whisper + Ollama (tinyllama, phi, config)
+  ./talkie download rifai            # + Scholar PDFs to downloads/
+  ./talkie restart changed          # Restart/rebuild only containers whose code changed
   ./talkie clean containers         # Clean up containers
 
 EOF
@@ -918,13 +964,15 @@ main() {
             cmd_stop "${1:-all}"
             ;;
         restart)
-            cmd_restart "${1:-all}"
+            if [ "${1:-}" = "changed" ]; then
+                shift
+                cmd_restart_changed "${1:-HEAD}"
+            else
+                cmd_restart "${1:-all}"
+            fi
             ;;
         app)
             cmd_app "$@"
-            ;;
-        restart-changed)
-            cmd_restart_changed "${1:-HEAD}"
             ;;
         logs)
             cmd_logs "$1" "$2"

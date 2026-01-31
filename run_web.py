@@ -8,6 +8,7 @@ Open: http://localhost:8765
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import logging
 import os
@@ -21,7 +22,7 @@ if str(_ROOT) not in sys.path:
 
 from config import AppConfig  # noqa: E402
 from run import bootstrap_config_and_db  # noqa: E402
-from starlette.requests import Request  # module-level so FastAPI can resolve request: Request in route handlers
+from starlette.requests import Request  # noqa: E402 module-level so FastAPI can resolve request: Request in route handlers
 
 logger = logging.getLogger(__name__)
 
@@ -70,18 +71,35 @@ def _create_pipeline_and_app(
         except Exception as e:
             logger.debug("Broadcast failed: %s", e)
 
-    speech_comps = None
+    context = {
+        "config": config,
+        "settings_repo": settings_repo,
+        "history_repo": history_repo,
+        "training_repo": training_repo,
+        "conn_factory": conn_factory,
+        "broadcast": broadcast,
+        "web_capture": web_capture,
+    }
+    modules_root = _ROOT / "modules"
     try:
-        from modules.speech import create_speech_components
+        from modules.discovery import discover_modules
 
-        speech_comps = create_speech_components(config, settings_repo)
-    except ImportError:
-        pass
+        discovered = discover_modules(modules_root)
+    except Exception:
+        discovered = []
 
-    # Use no-op TTS on the server so only the browser speaks (avoids double voice: server + client TTS).
+    for _name, config_path in discovered:
+        module_dir = config_path.parent.name
+        try:
+            mod = importlib.import_module(f"modules.{module_dir}")
+            if hasattr(mod, "register"):
+                mod.register(context)
+        except Exception as e:
+            logger.debug("Module %s register (phase 1) skipped: %s", module_dir, e)
+
+    speech_comps = context.get("speech_components")
     from modules.speech.tts.noop_engine import NoOpTTSEngine
 
-    # Always use speech module's speaker filter when available (voice profile: only calibrated speaker).
     pipeline = create_pipeline(
         config,
         history_repo,
@@ -93,39 +111,18 @@ def _create_pipeline_and_app(
         speaker_filter=speech_comps.speaker_filter if speech_comps else None,
         auto_sensitivity=speech_comps.auto_sensitivity if speech_comps else None,
     )
+    context["pipeline"] = pipeline
 
-    rag_service = None
-    try:
-        from modules.rag import register_with_pipeline
-
-        rag_service = register_with_pipeline(pipeline, config)
-    except Exception as e:
-        logger.warning("RAG not available: %s", e)
-        broadcast({"type": "debug", "message": "[WARN] RAG not available: " + str(e)})
-
-    browser_config = config.get_browser_config()
-    if browser_config.get("enabled"):
+    for _name, config_path in discovered:
+        module_dir = config_path.parent.name
         try:
-            from modules.browser import create_web_handler
-            from llm.client import OllamaClient
-
-            ollama_cfg = config.get("ollama", {})
-            base_url = config.resolve_internal_service_url(
-                ollama_cfg.get("base_url", "http://localhost:11434")
-            )
-            intent_llm = OllamaClient(
-                base_url=base_url,
-                model_name=ollama_cfg.get("model_name", "mistral"),
-                options=ollama_cfg.get("options"),
-            )
-            handler = create_web_handler(config, intent_llm, None)
-            if handler is not None:
-                pipeline.set_web_handler(handler)
+            mod = importlib.import_module(f"modules.{module_dir}")
+            if hasattr(mod, "register"):
+                mod.register(context)
         except Exception as e:
-            logger.warning("Browser not available: %s", e)
-            broadcast(
-                {"type": "debug", "message": "[WARN] Browser not available: " + str(e)}
-            )
+            logger.debug("Module %s register (phase 2) skipped: %s", module_dir, e)
+
+    rag_service = context.get("rag_service")
 
     pipeline.set_ui_callbacks(
         on_status=lambda s: broadcast({"type": "status", "value": s}),
@@ -204,7 +201,9 @@ def main() -> None:
     app = FastAPI(title="Talkie Web")
 
     @app.exception_handler(RequestValidationError)
-    async def validation_exception_handler(_request: Request, exc: RequestValidationError):
+    async def validation_exception_handler(
+        _request: Request, exc: RequestValidationError
+    ):
         """Convert 422 validation errors to 400 with a single error message for the client."""
         errors = getattr(exc, "errors", lambda: [])()
         msg = "; ".join(e.get("msg", str(e)) for e in errors) if errors else str(exc)
@@ -337,9 +336,13 @@ def main() -> None:
         ]
         out = {k: settings_repo.get(k) for k in keys}
         try:
-            from modules.speech.calibration.voice_profile import is_voice_profile_available
+            from modules.speech.calibration.voice_profile import (
+                is_voice_profile_available,
+            )
 
-            out["voice_profile_enrolled"] = "true" if is_voice_profile_available(settings_repo) else "false"
+            out["voice_profile_enrolled"] = (
+                "true" if is_voice_profile_available(settings_repo) else "false"
+            )
         except Exception:
             out["voice_profile_enrolled"] = "false"
         return out
@@ -377,6 +380,7 @@ def main() -> None:
         """Enroll user voice from base64 audio. Uses raw body to avoid validation and support large payloads."""
         try:
             import json as json_mod
+
             try:
                 raw = await request.body()
                 body = json_mod.loads(raw) if raw else None
@@ -389,25 +393,37 @@ def main() -> None:
             if not body or not isinstance(body, dict):
                 return JSONResponse(
                     status_code=400,
-                    content={"error": "Request body must be a JSON object with audio_base64 and sample_rate"},
+                    content={
+                        "error": "Request body must be a JSON object with audio_base64 and sample_rate"
+                    },
                 )
             try:
                 from modules.speech.calibration.voice_profile import enroll_user_voice
                 import base64 as b64
             except ImportError as e:
                 return JSONResponse(status_code=503, content={"error": str(e)})
-            audio_base64 = (body.get("audio_base64") or "").strip() if isinstance(body.get("audio_base64"), str) else ""
+            audio_base64 = (
+                (body.get("audio_base64") or "").strip()
+                if isinstance(body.get("audio_base64"), str)
+                else ""
+            )
             try:
                 sample_rate = max(8000, min(48000, int(body.get("sample_rate", 16000))))
             except (TypeError, ValueError):
                 sample_rate = 16000
             if not audio_base64:
-                return JSONResponse(status_code=400, content={"error": "audio_base64 required"})
+                return JSONResponse(
+                    status_code=400, content={"error": "audio_base64 required"}
+                )
             try:
                 audio_bytes = b64.b64decode(audio_base64)
             except Exception as e:
-                return JSONResponse(status_code=400, content={"error": f"Invalid audio_base64: {e}"})
-            success, message = enroll_user_voice(audio_bytes, sample_rate, settings_repo)
+                return JSONResponse(
+                    status_code=400, content={"error": f"Invalid audio_base64: {e}"}
+                )
+            success, message = enroll_user_voice(
+                audio_bytes, sample_rate, settings_repo
+            )
             if success:
                 return {"ok": True, "message": message}
             return JSONResponse(status_code=400, content={"error": message})
@@ -435,10 +451,28 @@ def main() -> None:
 
             voices = get_available_voices_with_gender()
             if not voices:
-                return {"voices": [{"name": "Daniel", "gender": "male"}]}
+                return {
+                    "voices": [
+                        {"name": "Daniel", "gender": "male"},
+                        {"name": "Alex", "gender": "male"},
+                        {"name": "Fred", "gender": "male"},
+                        {"name": "Samantha", "gender": "female"},
+                        {"name": "Karen", "gender": "female"},
+                        {"name": "Victoria", "gender": "female"},
+                    ]
+                }
             return {"voices": voices}
         except Exception:
-            return {"voices": [{"name": "Daniel", "gender": "male"}]}
+            return {
+                "voices": [
+                    {"name": "Daniel", "gender": "male"},
+                    {"name": "Alex", "gender": "male"},
+                    {"name": "Fred", "gender": "male"},
+                    {"name": "Samantha", "gender": "female"},
+                    {"name": "Karen", "gender": "female"},
+                    {"name": "Victoria", "gender": "female"},
+                ]
+            }
 
     @app.get("/api/training")
     async def api_training_list():

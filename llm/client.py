@@ -154,7 +154,9 @@ class OllamaClient:
                                 pass
                     except Exception:
                         pass
-                self._debug(f"Ollama error (attempt {attempt + 1}) after {elapsed:.2f}s: {e}")
+                self._debug(
+                    f"Ollama error (attempt {attempt + 1}) after {elapsed:.2f}s: {e}"
+                )
                 logger.warning(
                     "Ollama request attempt %d failed after %.2fs: %s",
                     attempt + 1,

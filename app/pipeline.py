@@ -98,9 +98,11 @@ def create_pipeline(
     base_url = config.resolve_internal_service_url(
         ollama_cfg.get("base_url", "http://localhost:11434")
     )
+    ollama_model = ollama_cfg.get("model_name", "mistral")
+    logger.info("Ollama model from config: %s (change config.yaml and restart Web UI to switch)", ollama_model)
     client = OllamaClient(
         base_url=base_url,
-        model_name=ollama_cfg.get("model_name", "mistral"),
+        model_name=ollama_model,
         timeout_sec=float(ollama_cfg.get("timeout_sec", 45)),
         options=ollama_cfg.get("options"),
     )
@@ -461,7 +463,11 @@ class Pipeline:
                     reason = self._speaker_filter.get_last_reject_reason()
                 self._debug(
                     "Speaker filter: rejected"
-                    + (f" ({reason})" if reason else " (voice did not match enrolled profile)")
+                    + (
+                        f" ({reason})"
+                        if reason
+                        else " (voice did not match enrolled profile)"
+                    )
                 )
                 continue
 
@@ -567,7 +573,10 @@ class Pipeline:
                             )
                             submitted = True
                         except RuntimeError as e:
-                            if "shutdown" in str(e).lower() or "futures" in str(e).lower():
+                            if (
+                                "shutdown" in str(e).lower()
+                                or "futures" in str(e).lower()
+                            ):
                                 regenerated = self._llm.generate(reg_user, reg_system)
                                 profile_context_prefetch, recent_list_prefetch = (
                                     self._prefetch_profile_and_recent(turns)
@@ -612,6 +621,24 @@ class Pipeline:
                             )
                         else:
                             used_regeneration = True
+                        # If model wrongly returned "I didn't catch that" for a clear test phrase or greeting, use transcription.
+                        if used_regeneration and intent_sentence.strip().lower().startswith(
+                            "i didn't catch that"
+                        ):
+                            norm = text.strip().lower().rstrip(".")
+                            if norm in (
+                                "test 123",
+                                "hello",
+                                "hi",
+                                "hey",
+                                "good morning",
+                                "good afternoon",
+                                "good evening",
+                            ) or (norm.startswith("test ") and len(norm) <= 30):
+                                intent_sentence = text.strip()
+                                self._debug(
+                                    "Model said 'I didn't catch that' for clear phrase; using transcription"
+                                )
                         if used_regeneration and regeneration_certainty is not None:
                             self._debug(
                                 "Regenerated intent: %s (certainty %d%%)"
@@ -781,9 +808,7 @@ class Pipeline:
                         except Exception as e:
                             logger.exception("Failed to save interaction: %s", e)
                             interaction_id = 0
-                        spoken_text = strip_certainty_from_response(
-                            web_response or ""
-                        )
+                        spoken_text = strip_certainty_from_response(web_response or "")
                         self._on_response(spoken_text, interaction_id)
                         prev_spoken = (self._last_spoken_response or "").strip().lower()
                         self._last_spoken_response = (spoken_text or "").strip()
@@ -941,13 +966,14 @@ class Pipeline:
                                     )
                                     profile_context = ""
                             retrieved_context = ""
+                            # Use only current sentence in prompt; history is used only for repeat check, not in the prompt.
                             system = build_system_prompt(
                                 profile_context,
                                 system_base=self._llm_prompt_config.get(
                                     "system_prompt"
                                 ),
                                 retrieved_context=retrieved_context or None,
-                                conversation_context=conversation_context or None,
+                                conversation_context=None,
                             )
                             user_prompt = build_user_prompt(
                                 intent_sentence,
@@ -1050,15 +1076,22 @@ class Pipeline:
                     else ""
                 )
                 self._last_spoken_response = (spoken_text or "").strip()
+                is_error_fallback = (spoken_text or "").strip() in (
+                    FALLBACK_MESSAGE.strip(),
+                    MEMORY_ERROR_MESSAGE.strip(),
+                )
                 if not spoken_text or _norm(spoken_text) != prev_spoken_norm:
-                    try:
-                        self._tts.speak(spoken_text)
-                        self._debug(
-                            "TTS: started speaking (speak again to abort and retry)"
-                        )
-                    except Exception as e:
-                        logger.exception("TTS speak failed: %s", e)
-                        self._debug("Error (TTS): %s" % e)
+                    if is_error_fallback:
+                        self._debug("Skipping TTS: error fallback (show in UI only)")
+                    else:
+                        try:
+                            self._tts.speak(spoken_text)
+                            self._debug(
+                                "TTS: started speaking (speak again to abort and retry)"
+                            )
+                        except Exception as e:
+                            logger.exception("TTS speak failed: %s", e)
+                            self._debug("Error (TTS): %s" % e)
                 else:
                     self._debug("Skipping TTS: same as last spoken (avoid repeating)")
                 # Do not wait for TTS to finish; return to listening so user can speak to abort and retry.

@@ -82,7 +82,10 @@ def enroll_user_voice(
         embed = encoder.embed_utterance(wav)
         embedding_list = embed.tolist()
         settings_repo.set(SETTINGS_KEY_EMBEDDING, json.dumps(embedding_list))
-        return True, f"Voice profile saved ({duration_sec:.1f}s). App will prefer your voice."
+        return (
+            True,
+            f"Voice profile saved ({duration_sec:.1f}s). App will prefer your voice.",
+        )
     except Exception as e:
         logger.exception("Voice enrollment failed: %s", e)
         return False, str(e)

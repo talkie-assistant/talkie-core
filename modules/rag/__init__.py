@@ -144,3 +144,27 @@ def register_with_pipeline(pipeline: object, config: object) -> RAGService | Non
     pipeline.set_rag_has_documents(service.has_documents)
     pipeline.set_document_qa_top_k(service.get_document_qa_top_k())
     return service
+
+
+def register(context: dict) -> None:
+    """
+    Register RAG with the pipeline (two-phase).
+    Phase 1 (context has no "pipeline"): no-op.
+    Phase 2 (context has "pipeline"): call register_with_pipeline, set context["rag_service"].
+    """
+    pipeline = context.get("pipeline")
+    if pipeline is None:
+        return
+    config = context.get("config")
+    if config is None:
+        return
+    try:
+        service = register_with_pipeline(pipeline, config)
+        context["rag_service"] = service
+    except Exception as e:
+        logger.warning("RAG register failed: %s", e)
+        broadcast = context.get("broadcast")
+        if callable(broadcast):
+            broadcast(
+                {"type": "debug", "message": "[WARN] RAG not available: " + str(e)}
+            )

@@ -90,7 +90,7 @@ Speech-to-text defaults to **Whisper** (`base` in config; use `small` or `medium
 
 Config is merged from module configs (`modules/speech/config.yaml`, etc.), root `config.yaml`, and optional `config.user.yaml` (user overrides, e.g. from Settings). Edit `config.yaml` (and optionally `config.user.yaml`) to set:
 
-- **Audio**: `audio.device_id`, `audio.sample_rate`, `audio.chunk_duration_sec`, `audio.sensitivity` (gain; default 3.0)
+- **Audio**: `audio.device_id`, `audio.sample_rate`, `audio.chunk_duration_sec`, `audio.sensitivity` (gain; default 3.0); auto sensitivity: `audio.auto_sensitivity` (when true, gain is raised automatically when STT returns empty but level is in band), `audio.auto_sensitivity_min_level`, `audio.auto_sensitivity_max_level`, `audio.auto_sensitivity_step`, `audio.auto_sensitivity_cooldown_chunks`
 - **STT**: `stt.engine` (`whisper` or `vosk`), `stt.whisper.model_path` (`base`, `small`, `medium`, `large-v3`); see "Speech-to-text accuracy" below
 - **Ollama**: `ollama.base_url`, `ollama.model_name`, `ollama.timeout_sec`
 - **LLM**: `llm.system_prompt`, `llm.user_prompt_template`, `llm.export_instruction`, `llm.min_transcription_length`, `llm.conversation_context_turns`; regeneration: `llm.regeneration_enabled`, `llm.use_regeneration_as_response`, `llm.regeneration_certainty_threshold`, `llm.regeneration_system_prompt`, etc.
@@ -186,10 +186,10 @@ Core (application root):
 **Modules** (optional features under `modules/`):
 
 - `modules/speech/` – Audio capture, STT (Vosk, Whisper), TTS (say), speaker filter, calibration; each has its own `config.yaml` merged into the main config
-- `modules/rag/` – Document ingestion (chunk, embed via Ollama, Chroma store), retrieval; plugin entry point `register_with_pipeline()`
-- `modules/browser/` – Voice-controlled web (search, open URL, store page for RAG); plugin entry point `create_web_handler()`
+- `modules/rag/` – Document ingestion (chunk, embed via Ollama, Chroma store), retrieval
+- `modules/browser/` – Voice-controlled web (search, open URL, store page for RAG)
 
-The app composes these at startup: if a module is missing or fails to load, the rest of the app still runs (e.g. without RAG or browser). Core depends only on abstractions and plugin APIs so modules can be maintained or removed independently.
+The app discovers modules under `modules/` and calls `register(context)` on each (two-phase: pipeline inputs then pipeline attachment). If a module is missing or fails to load, the rest of the app still runs. Core depends only on abstractions and plugin APIs so modules can be maintained or removed independently.
 
 ## Modular design
 
@@ -202,9 +202,9 @@ Talkie is split into **core** and **modules** so the codebase stays maintainable
 
 ## To-do
 
-- **Module registration**: Single `register(context)` entry point per module so new modules can plug in without editing `run.py` (see MODULES.md).
-- **Auto sensitivity**: Implement automatic sensitivity adjustment when STT returns empty but audio level indicates possible speech; config has `audio.auto_sensitivity` (manual only for now).
-- **Code quality**: Continue consolidation of duplicate logic in module servers and API clients; remove unused code and config; see `.cursor/prompts/1-implement-code-cleanup.md` for audit scope.
+- **Code quality**: Audit and consolidation completed for this pass (register(context), discovery-based wiring, ruff format, E402 fix). Further scope (duplicate detection, unused code, consolidation) is in `.cursor/prompts/1-implement-code-cleanup.md` and CHANGELOG.
+
+Auto sensitivity is implemented: when STT returns empty but audio level is in the configured band, gain is raised automatically. Enable with `audio.auto_sensitivity: true`; tune with `audio.auto_sensitivity_min_level`, `audio.auto_sensitivity_max_level`, `audio.auto_sensitivity_step`, `audio.auto_sensitivity_cooldown_chunks`.
 
 ## License
 

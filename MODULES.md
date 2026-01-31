@@ -73,19 +73,40 @@ When a module runs as an HTTP server (e.g. speech, rag, browser), its config liv
 
 ## Runtime integration (optional)
 
-Config discovery is automatic (via `sdk.discovery`). Registering a module at runtime (e.g. with the pipeline or UI) is done by the app using known module names and entry points:
+Config discovery is automatic (via `sdk.discovery`). The app discovers modules under `modules/` and calls **`register(context)`** on each module that provides it. No edits to `run_web.py` or `run.py` are needed for new modules.
 
-- **speech**: `modules.speech.create_speech_components(config, settings_repo)` provides capture, STT, TTS, etc. Implements `sdk.abstractions` (AudioCapture, STTEngine, TTSEngine, SpeakerFilter).
-- **rag**: `modules.rag.register_with_pipeline(pipeline, config)` registers the RAG retriever and returns the service. Uses `sdk.get_rag_section(raw)` for config.
-- **browser**: `modules.browser.create_web_handler(config, ollama_client, rag_ingest_callback)` returns the web handler for the pipeline. Uses `sdk.get_browser_section(raw)` for config.
+### Two-phase registration
 
-To add a new **runtime** plugin (not just config):
+The app calls `register(context)` twice per module:
 
-- Use the SDK for config (`sdk.get_section` or a section getter) and, if applicable, implement `sdk.abstractions`. Wire your module in `run.py` by importing it and calling your registration function.
-- In the future, the app may support a single `register(context)` entry point per module; for now, wiring remains in `run.py` for the three built-in modules.
+1. **Phase 1** (no `context["pipeline"]`): Modules that provide pipeline inputs may set `context["speech_components"]` (e.g. speech sets capture, STT, TTS, speaker filter, auto_sensitivity). Other modules no-op.
+2. **Phase 2** (after pipeline is created, `context["pipeline"]` set): Modules attach to the pipeline (e.g. rag sets retriever and `context["rag_service"]`; browser sets web handler). Speech no-ops in phase 2.
+
+### Context keys
+
+| Key | Phase | Description |
+|-----|-------|-------------|
+| `config` | 1, 2 | App config (AppConfig or dict-like). |
+| `settings_repo` | 1, 2 | Settings repository. |
+| `history_repo` | 1, 2 | History repository. |
+| `training_repo` | 1, 2 | Training facts repository. |
+| `conn_factory` | 1, 2 | DB connection factory. |
+| `broadcast` | 1, 2 | Callable(msg) to send JSON to all WebSocket clients. |
+| `web_capture` | 1, 2 | WebSocket audio capture for the pipeline. |
+| `speech_components` | 1 (set by speech) | Capture, STT, TTS, speaker filter, auto_sensitivity. |
+| `pipeline` | 2 | The pipeline instance. |
+| `rag_service` | 2 (set by rag) | RAG service for Documents UI. |
+
+### Adding a new runtime module
+
+1. Create a directory under `modules/` with `config.yaml` (and optionally `MODULE.yaml`).
+2. In the module's `__init__.py`, define `def register(context: dict) -> None`. In phase 1, set `context["speech_components"]` if your module provides speech; in phase 2, use `context["pipeline"]` and set `context["rag_service"]` or call `pipeline.set_web_handler(...)` as needed.
+3. No changes to `run_web.py` or `run.py` are required; the app discovers and calls `register(context)` for every discovered module.
+
+Legacy entry points (`create_speech_components`, `register_with_pipeline`, `create_web_handler`) remain available for direct use; the built-in modules use them inside `register(context)`.
 
 ## Summary
 
 - **Config**: Add `modules/<name>/config.yaml` (and optionally `MODULE.yaml`). The app will discover and merge it.
 - **SDK**: Use `sdk` for config section access, abstractions, discovery, and logging; see [docs/SDK.md](docs/SDK.md).
-- **Runtime**: Wire your module in `run.py` or follow the same entry point pattern as speech/rag/browser.
+- **Runtime**: Implement `register(context)` in your module's `__init__.py`; the app discovers modules and calls it in two phases (see above).

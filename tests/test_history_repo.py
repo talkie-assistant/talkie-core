@@ -130,6 +130,8 @@ def test_get_accepted_for_profile_respects_limit(
     accepted = repo.get_accepted_for_profile(limit=2)
     assert len(accepted) <= 2
     assert len(accepted) == 2
+
+
 def test_get_corrections_for_profile_respects_limit(
     repo: HistoryRepo, db_path: Path
 ) -> None:

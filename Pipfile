@@ -18,7 +18,6 @@ python-multipart = "*"
 python-consul = "*"
 redis = "*"
 httpx = "*"
-PyJWT = {version = "*", extras = ["crypto"]}
 # Speaker embedding for voice calibration (optional: app falls back to accept-all if not installed)
 resemblyzer = "*"
 torch = "*"

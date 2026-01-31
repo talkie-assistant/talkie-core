@@ -252,10 +252,33 @@ def create_speech_components(
     return SpeechFactory(config, settings_repo).create_components()
 
 
+def register(context: dict) -> None:
+    """
+    Register speech components with the app context (two-phase).
+    Phase 1 (context has no "pipeline"): set context["speech_components"].
+    Phase 2 (context has "pipeline"): no-op; pipeline was built with those components.
+    """
+    if context.get("pipeline") is not None:
+        return
+    config = context.get("config")
+    settings_repo = context.get("settings_repo")
+    if config is None:
+        return
+    try:
+        from modules.speech.tts.noop_engine import NoOpTTSEngine
+
+        comps = create_speech_components(config, settings_repo)
+        # Server uses NoOpTTSEngine so only the browser speaks
+        context["speech_components"] = comps._replace(tts=NoOpTTSEngine())
+    except Exception as e:
+        logger.debug("Speech module register (phase 1) failed: %s", e)
+
+
 __all__ = [
     "SpeechComponents",
     "SpeechFactory",
     "apply_calibration_overlay",
     "apply_llm_calibration_overlay",
     "create_speech_components",
+    "register",
 ]

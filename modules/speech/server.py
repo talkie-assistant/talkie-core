@@ -255,7 +255,9 @@ class SpeechModuleServer(BaseModuleServer):
                 sample_rate = int(data.get("sample_rate", 16000))
                 if not audio_base64:
                     return self._error_response(
-                        status.HTTP_400_BAD_REQUEST, "invalid_request", "audio_base64 required"
+                        status.HTTP_400_BAD_REQUEST,
+                        "invalid_request",
+                        "audio_base64 required",
                     )
                 audio_bytes = base64.b64decode(audio_base64)
                 success, message = enroll_user_voice(

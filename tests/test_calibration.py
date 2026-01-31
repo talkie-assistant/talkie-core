@@ -209,7 +209,12 @@ def test_create_pipeline_uses_calibration_sensitivity() -> None:
             "tts": {"enabled": False},
             "llm": {"min_transcription_length": 3},
         }
-        pipeline = create_pipeline(config, history_repo, settings_repo, training_repo)
+        from config import AppConfig
+
+        app_config = AppConfig(config)
+        pipeline = create_pipeline(
+            app_config, history_repo, settings_repo, training_repo
+        )
         assert pipeline.get_sensitivity() == 2.0
     finally:
         db_path.unlink(missing_ok=True)
@@ -251,7 +256,12 @@ def test_create_pipeline_uses_calibration_min_transcription_length() -> None:
             "tts": {"enabled": False},
             "llm": {"min_transcription_length": 3},
         }
-        pipeline = create_pipeline(config, history_repo, settings_repo, training_repo)
+        from config import AppConfig
+
+        app_config = AppConfig(config)
+        pipeline = create_pipeline(
+            app_config, history_repo, settings_repo, training_repo
+        )
         assert pipeline._llm_prompt_config.get("min_transcription_length") == 7
     finally:
         db_path.unlink(missing_ok=True)
@@ -331,7 +341,10 @@ def test_calibration_steps_include_voice_enrollment() -> None:
     assert len(CALIBRATION_STEPS) >= 1
     first = CALIBRATION_STEPS[0]
     assert first.get("id") == "voice_enrollment"
-    assert "voice" in (first.get("title") or "").lower() or "record" in (first.get("title") or "").lower()
+    assert (
+        "voice" in (first.get("title") or "").lower()
+        or "record" in (first.get("title") or "").lower()
+    )
     assert first.get("min_seconds", 0) >= VOICE_ENROLLMENT_MIN_SEC
 
 

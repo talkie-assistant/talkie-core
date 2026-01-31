@@ -52,9 +52,17 @@ def _maybe_start_local_servers(config: dict) -> None:
     Servers are started as background subprocesses.
     """
     from modules.api.config import get_module_server_config, get_module_base_url
+    from modules.discovery import discover_modules
+
+    modules_root = _ROOT / "modules"
+    try:
+        discovered = discover_modules(modules_root)
+    except Exception:
+        discovered = []
 
     modules_to_start = []
-    for module_name in ["speech", "rag", "browser"]:
+    for _name, config_path in discovered:
+        module_name = config_path.parent.name
         server_config = get_module_server_config(config, module_name)
         if server_config is None:
             continue
@@ -160,6 +168,7 @@ def validate_config(config: dict) -> None:
 
     # Ensure Ollama is reachable and the configured model is available (fail fast)
     from llm.client import OllamaClient
+
     client = OllamaClient(base_url=base_url, model_name=str(model).strip())
     if not client.check_connection(timeout_sec=5.0):
         raise ValueError(

@@ -7,6 +7,7 @@ Uses /usr/bin/say so it works when PATH is limited (e.g. launched from Finder).
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import threading
 
@@ -18,17 +19,66 @@ _SAY_PATH = "/usr/bin/say"
 
 # Known macOS 'say' voice names -> gender for filtering. Unknown voices are treated as "unknown".
 _VOICE_GENDER: dict[str, str] = {
-    "Agnes": "female", "Albert": "male", "Alex": "male", "Alice": "female", "Alva": "female",
-    "Amelie": "female", "Anna": "female", "Bruce": "male", "Carmit": "female", "Daniel": "male",
-    "Damayanti": "female", "Diego": "male", "Ellen": "female", "Fiona": "female", "Fred": "male",
-    "Ioana": "female", "Joana": "female", "Junior": "male", "Kanya": "female", "Karen": "female",
-    "Kathy": "female", "Kyoko": "female", "Laura": "female", "Lekha": "female", "Luciana": "female",
-    "Mariska": "female", "Mei-Jia": "female", "Melina": "female", "Milena": "female", "Moira": "female",
-    "Monica": "female", "Nora": "female", "Paulina": "female", "Ralph": "male", "Samantha": "female",
-    "Sara": "female", "Satu": "female", "Tarik": "male", "Tessa": "female", "Thomas": "male",
-    "Ting-Ting": "female", "Veena": "female", "Vicki": "female", "Victoria": "female", "Xander": "male",
-    "Yelda": "female", "Yuna": "female", "Zosia": "female", "Zuzana": "female",
+    "Agnes": "female",
+    "Albert": "male",
+    "Alex": "male",
+    "Alice": "female",
+    "Alva": "female",
+    "Amelie": "female",
+    "Anna": "female",
+    "Bruce": "male",
+    "Carmit": "female",
+    "Daniel": "male",
+    "Damayanti": "female",
+    "Diego": "male",
+    "Ellen": "female",
+    "Fiona": "female",
+    "Fred": "male",
+    "Ioana": "female",
+    "Joana": "female",
+    "Junior": "male",
+    "Kanya": "female",
+    "Karen": "female",
+    "Kathy": "female",
+    "Kyoko": "female",
+    "Laura": "female",
+    "Lekha": "female",
+    "Luciana": "female",
+    "Mariska": "female",
+    "Mei-Jia": "female",
+    "Melina": "female",
+    "Milena": "female",
+    "Moira": "female",
+    "Monica": "female",
+    "Nora": "female",
+    "Paulina": "female",
+    "Ralph": "male",
+    "Samantha": "female",
+    "Sara": "female",
+    "Satu": "female",
+    "Tarik": "male",
+    "Tessa": "female",
+    "Thomas": "male",
+    "Ting-Ting": "female",
+    "Veena": "female",
+    "Vicki": "female",
+    "Victoria": "female",
+    "Xander": "male",
+    "Yelda": "female",
+    "Yuna": "female",
+    "Zosia": "female",
+    "Zuzana": "female",
+    # Base names that may appear in "Name (Locale)" style output
+    "Aman": "female",
+    "Amélie": "female",
+    "Aru": "female",
+    "Eddy": "male",
+    "Flo": "female",
+    "Soumya": "female",
 }
+
+# Voice list line format: "VoiceId  Lang  # comment" or "VoiceId\tLang\t...". Lang is xx_XX.
+_LANG_RE = re.compile(r"\b[a-z]{2}_[A-Z]{2}\b")
 
 
 def get_available_voices() -> list[str]:
@@ -51,15 +101,24 @@ def get_available_voices_with_gender() -> list[dict[str, str]]:
         if result.returncode != 0:
             return []
         voices: list[dict[str, str]] = []
+        seen: set[str] = set()
         for line in result.stdout.splitlines():
             line = line.strip()
             if not line:
                 continue
-            parts = line.split()
-            if parts:
-                name = parts[0]
-                gender = _VOICE_GENDER.get(name, "unknown")
-                voices.append({"name": name, "gender": gender})
+            # Full voice id is everything before the language code (e.g. "Eddy (English (US))").
+            match = _LANG_RE.search(line)
+            if match:
+                name = line[: match.start()].strip()
+            else:
+                parts = line.split()
+                name = parts[0] if parts else ""
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            base = name.split()[0] if name else ""
+            gender = _VOICE_GENDER.get(base, _VOICE_GENDER.get(name, "unknown"))
+            voices.append({"name": name, "gender": gender})
         return sorted(voices, key=lambda x: x["name"])
     except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
         return []

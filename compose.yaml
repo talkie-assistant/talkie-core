@@ -1,5 +1,6 @@
 # Talkie services: Chroma runs in Podman; Ollama disabled (use local ollama serve).
 # Infrastructure: Consul, KeyDB, HAProxy. Module servers: speech, rag, browser.
+# mem_limit per service caps container RAM so host (and local Ollama) have headroom.
 #
 # The Talkie UI (main window) is NOT in a container; it runs locally.
 # To see the UI: run ./talkie app (starts containers then launches the UI),
@@ -36,6 +37,8 @@ services:
   chroma:
     image: chromadb/chroma:latest
     container_name: talkie-chroma
+    # Vector DB: 1g enough for typical doc sets; increase if large RAG index
+    mem_limit: 1g
     ports:
       - "8000:8000"
     volumes:
@@ -52,6 +55,7 @@ services:
   consul-server:
     image: hashicorp/consul:1.22
     container_name: talkie-consul-server
+    mem_limit: 256m
     # -ui last so it takes effect after config file merge; UI at http://localhost:8500/ui
     command:
       - agent
@@ -82,6 +86,7 @@ services:
   keydb:
     image: eqalpha/keydb:latest
     container_name: talkie-keydb
+    mem_limit: 512m
     ports:
       - "6380:6379"  # External port 6380, internal 6379
     volumes:
@@ -104,6 +109,7 @@ services:
   haproxy:
     image: haproxy:latest
     container_name: talkie-haproxy
+    mem_limit: 128m
     command: ["haproxy", "-W", "-db", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
     # Consul DNS is on 8600; HAProxy backends use resolvers consul (172.30.0.2:8600) in haproxy.cfg
     ports:
@@ -192,6 +198,8 @@ services:
       dockerfile: Dockerfile
     container_name: talkie-speech
     hostname: speech
+    # STT (Whisper base/small) + TTS + speaker filter: model in RAM, 2g for Whisper base
+    mem_limit: 2g
     command: ["python", "-m", "modules.speech.server", "--host", "0.0.0.0", "--port", "8001"]
     ports:
       - "8001:8001"
@@ -223,6 +231,8 @@ services:
       dockerfile: Dockerfile
     container_name: talkie-rag
     hostname: rag
+    # Chunk + embed (Ollama external) + Chroma client; 1g sufficient
+    mem_limit: 1g
     command: ["python", "-m", "modules.rag.server", "--host", "0.0.0.0", "--port", "8002"]
     ports:
       - "8002:8002"
@@ -255,6 +265,8 @@ services:
       dockerfile: Dockerfile
     container_name: talkie-browser
     hostname: browser
+    # Python fetch/parse; no headless Chrome in container; 512m
+    mem_limit: 512m
     command: ["python", "-m", "modules.browser.server", "--host", "0.0.0.0", "--port", "8003"]
     ports:
       - "8003:8003"
@@ -287,6 +299,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: talkie-healthbeat
+    mem_limit: 128m
     command: ["python", "-m", "modules.api.healthbeat", "--consul-host", "consul-server", "--keydb-host", "keydb", "--interval", "10.0"]
     restart: unless-stopped
     networks:

@@ -94,6 +94,8 @@ def test_very_long_chunk() -> None:
     assert 0.0 <= level <= 1.0
     assert level > 0.0
     assert not math.isnan(level)
+
+
 def test_mixed_positive_negative_rms() -> None:
     chunk = struct.pack("<4h", 1000, -1000, 1000, -1000)
     level = chunk_rms_level(chunk)

@@ -95,6 +95,8 @@ def test_none_empty_defensive() -> None:
 def test_accepted_display_cap_constant() -> None:
     assert ACCEPTED_DISPLAY_CAP == 30
     assert isinstance(ACCEPTED_DISPLAY_CAP, int)
+
+
 def test_correction_display_cap_constant() -> None:
     assert CORRECTION_DISPLAY_CAP == 50
     assert isinstance(CORRECTION_DISPLAY_CAP, int)

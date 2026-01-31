@@ -78,7 +78,9 @@ class VoiceProfileSpeakerFilter(SpeakerFilter):
             return True  # Too short to verify; accept to avoid rejecting short user utterances
         encoder = self._ensure_encoder()
         if encoder is None:
-            self._last_reject_reason = "voice profile enrolled but resemblyzer unavailable"
+            self._last_reject_reason = (
+                "voice profile enrolled but resemblyzer unavailable"
+            )
             logger.warning(
                 "Speaker filter: voice profile enrolled but resemblyzer unavailable; rejecting (only calibrated speaker allowed)"
             )

@@ -652,9 +652,56 @@ def create_web_handler(
     return handler
 
 
+def register(context: dict) -> None:
+    """
+    Register browser web handler with the pipeline (two-phase).
+    Phase 1 (context has no "pipeline"): no-op.
+    Phase 2 (context has "pipeline"): if browser enabled, create web handler and pipeline.set_web_handler(handler).
+    """
+    pipeline = context.get("pipeline")
+    if pipeline is None:
+        return
+    config = context.get("config")
+    if config is None:
+        return
+    raw = getattr(config, "_raw", config) if config is not None else {}
+    if not isinstance(raw, dict):
+        raw = {}
+    browser_cfg = get_browser_section(raw)
+    if not browser_cfg.get("enabled"):
+        return
+    try:
+        from llm.client import OllamaClient
+
+        ollama_cfg = raw.get("ollama", {})
+        base_url = (
+            config.resolve_internal_service_url(
+                ollama_cfg.get("base_url", "http://localhost:11434")
+            )
+            if hasattr(config, "resolve_internal_service_url")
+            else ollama_cfg.get("base_url", "http://localhost:11434")
+        )
+        intent_llm = OllamaClient(
+            base_url=base_url,
+            model_name=ollama_cfg.get("model_name", "mistral"),
+            options=ollama_cfg.get("options"),
+        )
+        handler = create_web_handler(config, intent_llm, None)
+        if handler is not None:
+            pipeline.set_web_handler(handler)
+    except Exception as e:
+        logger.warning("Browser not available: %s", e)
+        broadcast = context.get("broadcast")
+        if callable(broadcast):
+            broadcast(
+                {"type": "debug", "message": "[WARN] Browser not available: " + str(e)}
+            )
+
+
 __all__ = [
     "BrowserService",
     "FetchResult",
     "DEFAULT_DEMO_SCENARIOS",
     "create_web_handler",
+    "register",
 ]

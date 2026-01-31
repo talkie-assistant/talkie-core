@@ -97,7 +97,7 @@ logger.info("RAG ready")
 
 3. **Discovery** – Use only if your module needs to enumerate other modules or config paths; otherwise the app uses discovery for config loading.
 
-4. **Runtime wiring** – The host (`run.py`) currently imports known modules and calls their entry points (e.g. `create_speech_components`, `register_with_pipeline`, `create_web_handler`). A future `register(context)` entry point could formalize this; for now, new runtime plugins are wired in `run.py`.
+4. **Runtime wiring** – The host discovers modules under `modules/` and calls `register(context)` on each module that provides it (two-phase: first to collect pipeline inputs like speech components, then to attach to the pipeline). See [MODULES.md](../MODULES.md) for context keys and phases. New runtime plugins only need to implement `register(context)`; no edits to `run_web.py` or `run.py` are required.
 
 5. **Logging** – Prefer `sdk.get_logger("your_module")` for consistent names.
 
