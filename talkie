@@ -759,6 +759,35 @@ cmd_restart_changed() {
     log_info "Done. Restarted: $to_restart"
 }
 
+# Download assets (Vosk model, dirs; optional rifai PDFs)
+VOSK_MODEL_NAME="vosk-model-small-en-us-0.15"
+VOSK_URL="https://alphacephei.com/vosk/models/${VOSK_MODEL_NAME}.zip"
+
+cmd_download() {
+    local do_rifai="${1:-}"
+    log_info "Creating directories: models, downloads, data..."
+    mkdir -p models downloads data
+    if [ -d "models/${VOSK_MODEL_NAME}" ]; then
+        log_info "Vosk model already present: models/${VOSK_MODEL_NAME}"
+    else
+        log_info "Downloading Vosk model: ${VOSK_MODEL_NAME}..."
+        if command -v curl &>/dev/null; then
+            curl -sL -o "models/${VOSK_MODEL_NAME}.zip" "$VOSK_URL" || { log_error "Download failed."; exit 1; }
+        else
+            wget -q -O "models/${VOSK_MODEL_NAME}.zip" "$VOSK_URL" || { log_error "Download failed."; exit 1; }
+        fi
+        log_info "Extracting to models/${VOSK_MODEL_NAME}..."
+        ( cd models && unzip -o -q "${VOSK_MODEL_NAME}.zip" && rm -f "${VOSK_MODEL_NAME}.zip" ) || { log_error "Unzip failed."; exit 1; }
+        log_info "Vosk model ready: models/${VOSK_MODEL_NAME}"
+    fi
+    if [ "$do_rifai" = "rifai" ] || [ "$do_rifai" = "--rifai" ]; then
+        log_info "Running rifai_scholar_downloader (downloads/abdalla_rifai_publications_open_pdfs)..."
+        pipenv run python -m rifai_scholar_downloader || log_warn "rifai download failed or skipped."
+    else
+        log_info "Optional: run ./talkie download rifai to fetch Scholar PDFs to downloads/."
+    fi
+}
+
 # Clean up
 cmd_clean() {
     local what="${1:-containers}"
@@ -844,6 +873,11 @@ Commands:
         Use --follow or -f to follow logs
         Example: ./talkie logs consul-server --follow
 
+  download [rifai]
+        Fetch assets not in git (Vosk STT model to models/, create dirs).
+        - download: Vosk model only
+        - download rifai: also run rifai_scholar_downloader (PDFs to downloads/)
+
   clean [containers|volumes|all]
         Clean up resources
         - containers: Stop and remove containers
@@ -863,6 +897,8 @@ Examples:
   ./talkie app                      # Start services + Web UI (foreground)
   ./talkie app --local-only         # Start Web UI only (no module containers)
   ./talkie logs consul-server -f   # Follow Consul logs
+  ./talkie download                  # Fetch Vosk model to models/
+  ./talkie download rifai            # Vosk model + Scholar PDFs to downloads/
   ./talkie restart-changed          # Restart only containers whose code changed
   ./talkie clean containers         # Clean up containers
 
@@ -902,6 +938,9 @@ main() {
             ;;
         ps)
             cmd_ps
+            ;;
+        download)
+            cmd_download "$1"
             ;;
         clean)
             cmd_clean "${1:-containers}"
