@@ -369,8 +369,14 @@ def main() -> None:
             "calibration_chunk_duration_sec",
             "calibration_min_transcription_length",
             "voice_profile_threshold",
+            "preferred_name",
+            "pronouns",
+            "response_style",
+            "response_length",
+            "topic_hints",
+            "tts_rate",
         ]
-        out = {k: settings_repo.get(k) for k in keys}
+        out = settings_repo.get_many(keys)
         try:
             from modules.speech.calibration.voice_profile import (
                 is_voice_profile_available,
@@ -394,10 +400,17 @@ def main() -> None:
             "calibration_chunk_duration_sec",
             "calibration_min_transcription_length",
             "voice_profile_threshold",
+            "preferred_name",
+            "pronouns",
+            "response_style",
+            "response_length",
+            "topic_hints",
+            "tts_rate",
         )
         for k, v in body.items():
             if k in allowed and v is not None:
                 settings_repo.set(k, str(v))
+        deps["pipeline"].invalidate_profile_cache()
         return {"ok": True}
 
     @app.get("/api/calibration/steps")

@@ -5,6 +5,10 @@ Build profile text from user context, corrections, and accepted pairs for LLM co
 from __future__ import annotations
 
 from profile.constants import ACCEPTED_DISPLAY_CAP, CORRECTION_DISPLAY_CAP
+from profile.personalization_constants import (
+    RESPONSE_LENGTH_VALUES,
+    RESPONSE_STYLE_VALUES,
+)
 
 
 def _section_user_context(uc: str | None) -> str:
@@ -82,6 +86,50 @@ def _section_training_facts(facts: list[str] | None) -> str:
     )
 
 
+def _section_preferred_name(name: str | None) -> str:
+    if not (name and name.strip()):
+        return ""
+    return "Preferred name: " + name.strip() + "."
+
+
+def _section_pronouns(pronouns: str | None) -> str:
+    if not (pronouns and pronouns.strip()):
+        return ""
+    return "Pronouns: " + pronouns.strip() + "."
+
+
+def _section_response_style(style: str | None) -> str:
+    if not (style and style.strip()):
+        return ""
+    s = style.strip().lower()
+    if s not in RESPONSE_STYLE_VALUES:
+        return ""
+    if s == "casual":
+        return "Response style: use casual, conversational phrasing."
+    if s == "formal":
+        return "Response style: use formal, professional phrasing."
+    return "Response style: use neutral phrasing."
+
+
+def _section_response_length(length: str | None) -> str:
+    if not (length and length.strip()):
+        return ""
+    s = length.strip().lower()
+    if s not in RESPONSE_LENGTH_VALUES:
+        return ""
+    if s == "brief":
+        return "Response length: keep to one sentence only."
+    if s == "detailed":
+        return "Response length: may use a short paragraph when helpful."
+    return "Response length: one or two sentences as needed."
+
+
+def _section_topic_hints(hints: str | None) -> str:
+    if not (hints and hints.strip()):
+        return ""
+    return "Topics the user often talks about: " + hints.strip() + "."
+
+
 def build_profile_text(
     user_context: str | None,
     corrections: list[tuple[str, str]] | None,
@@ -89,6 +137,11 @@ def build_profile_text(
     training_facts: list[str] | None = None,
     correction_display_cap: int | None = None,
     accepted_display_cap: int | None = None,
+    preferred_name: str | None = None,
+    pronouns: str | None = None,
+    response_style: str | None = None,
+    response_length: str | None = None,
+    topic_hints: str | None = None,
 ) -> str:
     """
     Build one profile string from user context, corrections, and accepted pairs.
@@ -99,6 +152,21 @@ def build_profile_text(
     uc = _section_user_context(user_context)
     if uc:
         sections.append(uc)
+    pn = _section_preferred_name(preferred_name)
+    if pn:
+        sections.append(pn)
+    pr = _section_pronouns(pronouns)
+    if pr:
+        sections.append(pr)
+    th = _section_topic_hints(topic_hints)
+    if th:
+        sections.append(th)
+    rs = _section_response_style(response_style)
+    if rs:
+        sections.append(rs)
+    rl = _section_response_length(response_length)
+    if rl:
+        sections.append(rl)
     train = _section_training_facts(training_facts)
     if train:
         sections.append(train)

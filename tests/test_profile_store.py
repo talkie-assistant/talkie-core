@@ -110,6 +110,24 @@ def test_get_context_for_llm_with_settings(
     assert "short" in ctx or "User context" in ctx or len(ctx) >= 0
 
 
+def test_get_context_for_llm_includes_preferred_name_and_pronouns(
+    history_repo: HistoryRepo,
+    settings_repo: SettingsRepo,
+) -> None:
+    settings_repo.set_many([
+        ("user_context", "Professor."),
+        ("preferred_name", "Lou"),
+        ("pronouns", "she/her"),
+    ])
+    p = LanguageProfile(history_repo, settings_repo=settings_repo)
+    ctx = p.get_context_for_llm()
+    assert isinstance(ctx, str)
+    assert "Preferred name" in ctx
+    assert "Lou" in ctx
+    assert "Pronouns" in ctx
+    assert "she/her" in ctx
+
+
 def test_get_context_for_llm_with_training(
     history_repo: HistoryRepo,
     training_repo: TrainingRepo,

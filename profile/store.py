@@ -78,9 +78,19 @@ class LanguageProfile:
         ):
             return self._context_cache
         try:
-            user_context = None
+            settings: dict[str, str | None] = {}
             if self._settings_repo is not None:
-                user_context = self._settings_repo.get("user_context")
+                settings = self._settings_repo.get_many(
+                    [
+                        "user_context",
+                        "preferred_name",
+                        "pronouns",
+                        "response_style",
+                        "response_length",
+                        "topic_hints",
+                    ]
+                )
+            user_context = settings.get("user_context")
             training_facts = []
             if self._training_repo is not None:
                 training_facts = self._training_repo.get_for_profile()
@@ -97,6 +107,11 @@ class LanguageProfile:
                 training_facts=training_facts,
                 correction_display_cap=self._correction_display_cap,
                 accepted_display_cap=self._accepted_display_cap,
+                preferred_name=settings.get("preferred_name"),
+                pronouns=settings.get("pronouns"),
+                response_style=settings.get("response_style"),
+                response_length=settings.get("response_length"),
+                topic_hints=settings.get("topic_hints"),
             )
             self._context_cache_time = now
             return self._context_cache

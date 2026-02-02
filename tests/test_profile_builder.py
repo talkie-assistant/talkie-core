@@ -133,3 +133,101 @@ def test_whitespace_user_context_stripped() -> None:
     out = build_profile_text("  trim me  ", [], [])
     assert "trim me" in out
     assert "  trim" not in out or out.strip().startswith("User context")
+
+
+def test_preferred_name_only() -> None:
+    out = build_profile_text(None, [], [], preferred_name="Lou")
+    assert "Preferred name" in out
+    assert "Lou" in out
+    assert "User context" not in out
+
+
+def test_preferred_name_empty_none_omitted() -> None:
+    assert build_profile_text(None, [], [], preferred_name="") == ""
+    assert build_profile_text(None, [], [], preferred_name=None) == ""
+
+
+def test_pronouns_only() -> None:
+    out = build_profile_text(None, [], [], pronouns="she/her")
+    assert "Pronouns" in out
+    assert "she/her" in out
+
+
+def test_pronouns_empty_none_omitted() -> None:
+    assert build_profile_text(None, [], [], pronouns="") == ""
+    assert build_profile_text(None, [], [], pronouns=None) == ""
+
+
+def test_response_style_only() -> None:
+    out = build_profile_text(None, [], [], response_style="casual")
+    assert "Response style" in out
+    assert "casual" in out or "conversational" in out
+    out_formal = build_profile_text(None, [], [], response_style="formal")
+    assert "formal" in out_formal or "professional" in out_formal
+
+
+def test_response_style_unknown_omitted() -> None:
+    out = build_profile_text(None, [], [], response_style="custom")
+    assert "Response style" not in out
+    out = build_profile_text(None, [], [], response_style="typo")
+    assert "Response style" not in out
+
+
+def test_response_length_only() -> None:
+    out = build_profile_text(None, [], [], response_length="brief")
+    assert "Response length" in out
+    assert "one sentence" in out
+    out_det = build_profile_text(None, [], [], response_length="detailed")
+    assert "paragraph" in out_det or "detailed" in out_det.lower()
+
+
+def test_response_length_unknown_omitted() -> None:
+    out = build_profile_text(None, [], [], response_length="long")
+    assert "Response length" not in out
+
+
+def test_topic_hints_only() -> None:
+    out = build_profile_text(None, [], [], topic_hints="health, family")
+    assert "Topics the user" in out
+    assert "health, family" in out
+
+
+def test_topic_hints_empty_none_omitted() -> None:
+    assert build_profile_text(None, [], [], topic_hints="") == ""
+    assert build_profile_text(None, [], [], topic_hints=None) == ""
+
+
+def test_personalization_combined_with_user_context() -> None:
+    out = build_profile_text(
+        "PhD at Brown.",
+        [],
+        [],
+        preferred_name="Lou",
+        pronouns="they/them",
+        response_style="neutral",
+        response_length="standard",
+        topic_hints="health, daily care",
+    )
+    assert "User context" in out
+    assert "PhD at Brown" in out
+    assert "Preferred name" in out
+    assert "Lou" in out
+    assert "Pronouns" in out
+    assert "they/them" in out
+    assert "Response style" in out
+    assert "Response length" in out
+    assert "Topics the user" in out
+    assert "health, daily care" in out
+    assert out.index("User context") < out.index("Preferred name")
+    assert out.index("Preferred name") < out.index("Pronouns")
+
+
+def test_build_profile_text_backward_compat_no_new_args() -> None:
+    out = build_profile_text("ctx", [], [])
+    assert "User context" in out
+    assert "ctx" in out
+    assert "Preferred name" not in out
+    assert "Pronouns" not in out
+    assert "Response style" not in out
+    assert "Response length" not in out
+    assert "Topics the user" not in out

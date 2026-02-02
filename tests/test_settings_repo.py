@@ -136,3 +136,27 @@ def test_set_many_overwrites_existing(repo: SettingsRepo) -> None:
     repo.set("tts_voice", "Daniel")
     repo.set_many([("tts_voice", "Samantha")])
     assert repo.get("tts_voice") == "Samantha"
+
+
+def test_get_many_empty_keys_returns_empty_dict(repo: SettingsRepo) -> None:
+    assert repo.get_many([]) == {}
+
+
+def test_get_many_missing_key_returns_none(repo: SettingsRepo) -> None:
+    result = repo.get_many(["missing"])
+    assert result == {"missing": None}
+
+
+def test_get_many_mixed_present_missing(repo: SettingsRepo) -> None:
+    repo.set("a", "val_a")
+    repo.set("c", "val_c")
+    result = repo.get_many(["a", "b", "c"])
+    assert result == {"a": "val_a", "b": None, "c": "val_c"}
+
+
+def test_get_many_matches_individual_get(repo: SettingsRepo) -> None:
+    repo.set_many([("k1", "v1"), ("k2", "v2"), ("k3", "v3")])
+    many = repo.get_many(["k1", "k2", "k3"])
+    assert many["k1"] == repo.get("k1")
+    assert many["k2"] == repo.get("k2")
+    assert many["k3"] == repo.get("k3")

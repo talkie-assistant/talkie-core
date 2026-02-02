@@ -144,6 +144,8 @@ class SpeechFactory:
             return NoOpTTSEngine()
         engine = (tts_cfg.get("engine") or "say").lower()
         if engine == "say":
+            from .tts.say_engine import get_rate_wpm
+
             voice = None
             if self._settings_repo:
                 try:
@@ -161,7 +163,15 @@ class SpeechFactory:
                     timeout = float(t)
             except (TypeError, ValueError):
                 pass
-            return SayEngine(voice=voice, speak_timeout_sec=timeout)
+            rate_wpm = None
+            if self._settings_repo:
+                try:
+                    rate_wpm = get_rate_wpm(self._settings_repo.get("tts_rate"))
+                except Exception:
+                    pass
+            return SayEngine(
+                voice=voice, speak_timeout_sec=timeout, rate_wpm=rate_wpm
+            )
         return NoOpTTSEngine()
 
     def create_speaker_filter(self) -> Any:

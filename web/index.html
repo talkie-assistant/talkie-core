@@ -468,7 +468,7 @@
             <tr><th><kbd>H</kbd> or <kbd>h</kbd></th><td>Show this help (in browse mode: browse commands)</td></tr>
             <tr><th><kbd>Esc</kbd></th><td>Close help (when open)</td></tr>
             <tr><th>Tab</th><td>Move focus (skip link, nav, main content)</td></tr>
-            <tr><th>Nav buttons</th><td><kbd>Enter</kbd> or <kbd>Space</kbd> to switch section (Main, History, Settings, Documents, Training, Calibration)</td></tr>
+            <tr><th>Nav buttons</th><td><kbd>Enter</kbd> or <kbd>Space</kbd> to switch section (Main, History, Personalization, Documents, Training, Calibration)</td></tr>
             <tr><th>History rows</th><td>Click or <kbd>Enter</kbd>/<kbd>Space</kbd> to select row for correction</td></tr>
             <tr><th>Status bar</th><td>Refresh icon: reconnect WebSocket when disconnected</td></tr>
             <tr><th>Modules</th><td>Speech, Web, RAG: enable after connecting to server</td></tr>
@@ -522,7 +522,7 @@
   <nav role="navigation" aria-label="Sections">
     <button type="button" data-tab="main" aria-current="true">Main</button>
     <button type="button" data-tab="history" aria-current="false">History</button>
-    <button type="button" data-tab="settings" aria-current="false">Settings</button>
+    <button type="button" data-tab="settings" aria-current="false">Personalization</button>
     <button type="button" data-tab="documents" aria-current="false">Documents</button>
     <button type="button" data-tab="training" aria-current="false">Training</button>
     <button type="button" data-tab="calibration" aria-current="false">Calibration</button>
@@ -564,8 +564,14 @@
 
   <div id="panel-settings" class="panel">
     <div class="form-row"><label>User context (optional)</label><textarea id="settingsUserContext" placeholder="e.g. PhD, ex-tenured professor..."></textarea></div>
+    <div class="form-row"><label>Preferred name</label><input type="text" id="settingsPreferredName" placeholder="e.g. Lou"></div>
+    <div class="form-row"><label>Pronouns</label><select id="settingsPronouns"><option value="">—</option><option value="he/him">he/him</option><option value="she/her">she/her</option><option value="they/them">they/them</option></select></div>
+    <div class="form-row"><label>Response style</label><select id="settingsResponseStyle"><option value="">—</option><option value="casual">Casual</option><option value="formal">Formal</option><option value="neutral">Neutral</option></select></div>
+    <div class="form-row"><label>Response length</label><select id="settingsResponseLength"><option value="">—</option><option value="brief">Brief</option><option value="standard">Standard</option><option value="detailed">Detailed</option></select></div>
+    <div class="form-row"><label>Topic hints (optional)</label><textarea id="settingsTopicHints" placeholder="e.g. health, family, daily care"></textarea></div>
     <div class="form-row"><label>Voice Gender</label><select id="settingsVoiceFilter"><option value="">Any</option><option value="male">Male</option><option value="female">Female</option></select></div>
     <div class="form-row"><label>TTS voice</label><select id="settingsVoice"></select><button type="button" id="settingsVoiceTest">Test</button></div>
+    <div class="form-row"><label>TTS speech rate</label><select id="settingsTtsRate"><option value="">—</option><option value="slow">Slow</option><option value="normal">Normal</option><option value="fast">Fast</option></select></div>
     <button type="button" id="settingsSave">Save</button>
   </div>
 
@@ -1114,6 +1120,14 @@
       function loadSettings() {
         api('/api/settings').then(function (data) {
           document.getElementById('settingsUserContext').value = data.user_context || '';
+          document.getElementById('settingsPreferredName').value = data.preferred_name || '';
+          var pronounsEl = document.getElementById('settingsPronouns');
+          if (pronounsEl) pronounsEl.value = data.pronouns || '';
+          document.getElementById('settingsResponseStyle').value = data.response_style || '';
+          document.getElementById('settingsResponseLength').value = data.response_length || '';
+          document.getElementById('settingsTopicHints').value = data.topic_hints || '';
+          var ttsRateEl = document.getElementById('settingsTtsRate');
+          if (ttsRateEl) ttsRateEl.value = data.tts_rate || '';
           const voiceFilter = data.tts_voice_filter || '';
           const filterSel = document.getElementById('settingsVoiceFilter');
           if (filterSel) filterSel.value = voiceFilter;
@@ -1147,9 +1161,15 @@
       }
       document.getElementById('settingsSave').addEventListener('click', function () {
         const user_context = document.getElementById('settingsUserContext').value;
+        const preferred_name = document.getElementById('settingsPreferredName').value;
+        const pronouns = (document.getElementById('settingsPronouns') && document.getElementById('settingsPronouns').value) || '';
+        const response_style = (document.getElementById('settingsResponseStyle') && document.getElementById('settingsResponseStyle').value) || '';
+        const response_length = (document.getElementById('settingsResponseLength') && document.getElementById('settingsResponseLength').value) || '';
+        const topic_hints = document.getElementById('settingsTopicHints').value;
         const tts_voice = document.getElementById('settingsVoice').value;
         const tts_voice_filter = (document.getElementById('settingsVoiceFilter') && document.getElementById('settingsVoiceFilter').value) || '';
-        api('/api/settings', { method: 'PUT', body: JSON.stringify({ user_context: user_context, tts_voice: tts_voice, tts_voice_filter: tts_voice_filter }) }).then(function () {
+        const tts_rate = (document.getElementById('settingsTtsRate') && document.getElementById('settingsTtsRate').value) || '';
+        api('/api/settings', { method: 'PUT', body: JSON.stringify({ user_context: user_context, preferred_name: preferred_name, pronouns: pronouns, response_style: response_style, response_length: response_length, topic_hints: topic_hints, tts_voice: tts_voice, tts_voice_filter: tts_voice_filter, tts_rate: tts_rate }) }).then(function () {
           if (typeof window.speechSynthesis !== 'undefined') {
             const voices = window.speechSynthesis.getVoices();
             const v = voices.find(function (x) { return x.name === tts_voice; }) || voices.find(function (x) { return x.name.indexOf(tts_voice) >= 0; });

@@ -80,6 +80,21 @@ _VOICE_GENDER: dict[str, str] = {
 # Voice list line format: "VoiceId  Lang  # comment" or "VoiceId\tLang\t...". Lang is xx_XX.
 _LANG_RE = re.compile(r"\b[a-z]{2}_[A-Z]{2}\b")
 
+# TTS rate (say -r words per minute): slow, normal, fast
+TTS_RATE_WPM: dict[str, int] = {
+    "slow": 120,
+    "normal": 175,
+    "fast": 220,
+}
+
+
+def get_rate_wpm(tts_rate: str | None) -> int | None:
+    """Return WPM for tts_rate (slow/normal/fast), or None if invalid/missing."""
+    if not (tts_rate and tts_rate.strip()):
+        return None
+    s = tts_rate.strip().lower()
+    return TTS_RATE_WPM.get(s)
+
 
 def get_available_voices_with_gender() -> list[dict[str, str]]:
     """Return list of {name, gender} for macOS 'say' voices. gender is 'male', 'female', or 'unknown'."""
@@ -129,9 +144,11 @@ class SayEngine(TTSEngine):
         self,
         voice: str | None = None,
         speak_timeout_sec: float = 300.0,
+        rate_wpm: int | None = None,
     ) -> None:
         self._voice = voice
         self._speak_timeout_sec = max(1.0, min(3600.0, float(speak_timeout_sec)))
+        self._rate_wpm = rate_wpm if (rate_wpm is not None and rate_wpm > 0) else None
         self._speak_thread: threading.Thread | None = None
         self._speak_lock = threading.Lock()
         self._current_process: subprocess.Popen | None = None
@@ -185,6 +202,8 @@ class SayEngine(TTSEngine):
             cmd = [_SAY_PATH]
             if self._voice:
                 cmd.extend(["-v", self._voice])
+            if self._rate_wpm is not None:
+                cmd.extend(["-r", str(self._rate_wpm)])
             cmd.append(text)
             logger.info("TTS speaking (%d chars)", len(text))
             proc = subprocess.Popen(

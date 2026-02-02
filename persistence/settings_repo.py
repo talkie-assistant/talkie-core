@@ -49,6 +49,30 @@ class SettingsRepo:
             logger.exception("SettingsRepo.get failed: %s", e)
             raise
 
+    def get_many(self, keys: list[str]) -> dict[str, str | None]:
+        """Return dict of key -> value for each key; missing keys get value None. Empty keys -> {}."""
+
+        if not keys:
+            return {}
+
+        def get_batch(conn: sqlite3.Connection) -> dict[str, str | None]:
+            placeholders = ",".join("?" * len(keys))
+            cur = conn.execute(
+                "SELECT key, value FROM user_settings WHERE key IN (" + placeholders + ")",
+                keys,
+            )
+            rows = cur.fetchall()
+            result: dict[str, str | None] = {k: None for k in keys}
+            for row in rows:
+                result[row[0]] = row[1]
+            return result
+
+        try:
+            return with_connection(self._connector, get_batch)
+        except sqlite3.Error as e:
+            logger.exception("SettingsRepo.get_many failed: %s", e)
+            raise
+
     def set(self, key: str, value: str) -> None:
         """Store value for key. Truncates user_context to configured max chars if key is 'user_context'."""
         if key == "user_context" and len(value) > self._user_context_max_chars:
