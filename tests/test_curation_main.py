@@ -43,7 +43,7 @@ def test_curation_main_export_calls_export_for_finetuning(tmp_path: Path) -> Non
 
 def test_curation_main_export_with_limit(tmp_path: Path) -> None:
     export_path = tmp_path / "out.jsonl"
-    config = {"persistence": {"db_path": str(tmp_path / "talkie.db")}}
+    config = {"persistence": {"db_path": str(tmp_path / "talkie-core.db")}}
     with patch("curation.__main__.load_config", return_value=config):
         with patch("curation.__main__.export_for_finetuning") as mock_export:
             mock_export.return_value = 0
@@ -58,7 +58,7 @@ def test_curation_main_export_with_limit(tmp_path: Path) -> None:
 
 
 def test_curation_main_no_export_calls_run_curation_from_config(tmp_path: Path) -> None:
-    db_path = str(tmp_path / "talkie.db")
+    db_path = str(tmp_path / "talkie-core.db")
     config = {"persistence": {"db_path": db_path}, "curation": {"min_weight": 0.0}}
     with patch("curation.__main__.load_config", return_value=config):
         with patch("curation.__main__.run_curation_from_config") as mock_run:

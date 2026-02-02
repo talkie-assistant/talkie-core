@@ -542,6 +542,59 @@ def main() -> None:
         training_repo.delete(fact_id)
         return {"ok": True}
 
+    @app.get("/api/modules")
+    async def api_modules_list():
+        """List discovered modules with name, version, description, ui_id for UI."""
+        try:
+            from modules.discovery import get_modules_info
+
+            infos = get_modules_info(_ROOT / "modules")
+            return {
+                "modules": [
+                    {
+                        "id": m["id"],
+                        "name": m["name"],
+                        "version": m["version"],
+                        "description": m["description"],
+                        "ui_id": m.get("ui_id"),
+                    }
+                    for m in infos
+                ]
+            }
+        except Exception as e:
+            logger.debug("Modules list failed: %s", e)
+            return {"modules": []}
+
+    @app.get("/api/modules/{module_id}/help")
+    async def api_module_help(module_id: str):
+        """Return help content for a module (id = dir name or ui_id). Renders markdown to HTML."""
+        try:
+            from modules.discovery import resolve_module_help_path
+
+            help_path = resolve_module_help_path(module_id, _ROOT / "modules")
+            if help_path is None or not help_path.is_file():
+                return JSONResponse(
+                    status_code=404, content={"error": "Module or help entry not found"}
+                )
+            raw = help_path.read_text(encoding="utf-8", errors="replace")
+            try:
+                import markdown
+
+                html = markdown.markdown(
+                    raw,
+                    extensions=["tables", "fenced_code", "nl2br"],
+                )
+            except Exception:
+                import html as html_module
+
+                html = "<pre>" + html_module.escape(raw) + "</pre>"
+            return {"content": html, "format": "html"}
+        except Exception as e:
+            logger.debug("Module help failed: %s", e)
+            return JSONResponse(
+                status_code=500, content={"error": str(e)}
+            )
+
     @app.get("/api/documents")
     async def api_documents_list():
         if rag_service is None:

@@ -1,6 +1,6 @@
-# Talkie — Feature Overview for Professionals
+# Talkie-core — Feature Overview for Professionals
 
-This document summarizes Talkie’s capabilities for clinicians, speech-language pathologists, care teams, and other professionals who work with people with speech impairments (e.g., dysarthria, Parkinson’s disease). It is informational rather than promotional.
+This document summarizes Talkie-core’s capabilities for clinicians, speech-language pathologists, care teams, and other professionals who work with people with speech impairments (e.g., dysarthria, Parkinson’s disease). It is informational rather than promotional.
 
 ## Feature list
 
@@ -20,7 +20,7 @@ This document summarizes Talkie’s capabilities for clinicians, speech-language
 
 ## Overview
 
-Talkie is a web-based application (laptop or Raspberry Pi) that helps people with reduced speech clarity communicate in conversation. The user speaks into a microphone; the system transcribes speech, completes or clarifies the intended sentence using a local language model, and displays the result in large, high-contrast text. Optionally, responses can be read aloud with text-to-speech. **All processing runs locally**—no speech or text is sent to the cloud.
+Talkie-core is a web-based application (laptop or Raspberry Pi) that helps people with reduced speech clarity communicate in conversation. The user speaks into a microphone; the system transcribes speech, completes or clarifies the intended sentence using a local language model, and displays the result in large, high-contrast text. Optionally, responses can be read aloud with text-to-speech. **All processing runs locally**—no speech or text is sent to the cloud.
 
 ---
 

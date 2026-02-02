@@ -32,7 +32,7 @@ def _resolve_db_path() -> Path:
     except FileNotFoundError as e:
         print(e, file=sys.stderr)
         sys.exit(1)
-    db_path = Path(raw.get("persistence", {}).get("db_path", "data/talkie.db"))
+    db_path = Path(raw.get("persistence", {}).get("db_path", "data/talkie-core.db"))
     if not db_path.is_absolute():
         db_path = Path.cwd() / db_path
     return db_path

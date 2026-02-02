@@ -428,7 +428,7 @@ class Pipeline:
             return
         # New executor each start; the previous one may have been shut down in stop().
         self._executor = ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="talkie-pipeline"
+            max_workers=2, thread_name_prefix="talkie-core-pipeline"
         )
         self._running = True
         self._thread = threading.Thread(target=self._run_loop, daemon=True)

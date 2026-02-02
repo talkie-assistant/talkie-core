@@ -365,7 +365,7 @@ def main() -> None:
         from persistence.database import get_connection
         from persistence.settings_repo import SettingsRepo
 
-        db_path = config.get("persistence", {}).get("db_path", "data/talkie.db")
+        db_path = config.get("persistence", {}).get("db_path", "data/talkie-core.db")
 
         def conn_factory():
             return get_connection(str(db_path))

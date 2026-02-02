@@ -1,3 +1,10 @@
+[project]
+name = "talkie-core"
+version = "0.1.0"
+description = "Local voice-first communication app"
+readme = "README.md"
+requires-python = ">=3.11"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"

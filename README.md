@@ -1,6 +1,6 @@
-# Talkie
+# Talkie-core
 
-**TLDR:** Talkie is a local, voice-first app that helps people with reduced speech clarity communicate. You speak; it transcribes, clarifies with a local LLM, and shows (or speaks) the result. All processing stays on your machine.
+**TLDR:** Talkie-core is a local, voice-first app that helps people with reduced speech clarity communicate. You speak; it transcribes, clarifies with a local LLM, and shows (or speaks) the result. All processing stays on your machine.
 
 ## Stack (engineering view)
 
@@ -17,7 +17,7 @@ Full documentation (features, configuration, architecture, modules, SDK, trouble
 
 1. **Requirements:** Python 3.11+, microphone, [Ollama](https://ollama.ai/) running with a model (e.g. `ollama pull phi`).
 2. **Install:** `pipenv install`
-3. **Start:** Use the Talkie CLI (do not run the Python process directly):
+3. **Start:** Use the Talkie-core CLI (do not run the Python process directly):
    - **Web UI only (no containers):** `./talkie start web` → open http://localhost:8765
    - **Full stack (containers + Web UI):** `./talkie start all`
 4. **Optional:** Set `TALKIE_CONFIG` to the path of a different `config.yaml`.
@@ -36,7 +36,7 @@ pipenv run ruff format .
 
 Tests cover core app (pipeline, browse command, audio, web capture), config, LLM (client and prompts), persistence (database, history/settings/training repos), profile (builder, store, constants), curation (curator, export, scheduler), modules (discovery, browser, RAG, speech calibration, API retry/circuit breaker), SDK (config, abstractions, audio utils, logging), and the rifai downloader helpers. Tests use many assertions per case to specify behavior clearly. Full testing documentation (catalog, how to run, coverage, per-module descriptions) is in the **project wiki** (Testing page).
 
-`requirements.txt` is for the **rifai_scholar_downloader** subproject only; use Pipfile for the Talkie app.
+`requirements.txt` is for the **rifai_scholar_downloader** subproject only; use Pipfile for the Talkie-core app.
 
 ## License
 

@@ -35,7 +35,7 @@ stt:
 
 ollama:
   # Local Ollama: run `ollama serve` on the host. base_url must be http://localhost:11434.
-  # (Podman Ollama service is disabled in compose.yaml and talkie script.)
+  # (Podman Ollama service is disabled in compose.yaml and talkie-core CLI.)
   base_url: "http://localhost:11434"
   # model_name: use tinyllama (~637 MiB) if you see "model runner has unexpectedly stopped" (low RAM).
   # phi ~1.5 GiB; mistral ~4.5 GiB. Pull first: ollama pull <name>
@@ -188,7 +188,7 @@ tts:
   wait_until_done_before_listen: false
 
 persistence:
-  db_path: "data/talkie.db"
+  db_path: "data/talkie-core.db"
 
 # RAG: document upload, vectorization (Ollama embed), Chroma store; "Ask documents" query-by-voice.
 # To run Chroma in Podman: podman compose up -d (see compose.yaml), then set chroma_host (and optional chroma_port).
@@ -250,7 +250,7 @@ browser:
 
 logging:
   level: DEBUG   # DEBUG | INFO | WARNING | ERROR
-  file: "talkie.log"   # app root relative; all logger output written here
+  file: "talkie-core.log"   # app root relative; all logger output written here
 
 # Infrastructure: Service Discovery and Caching
 # Consul is the authoritative name server for internal services (*.service.consul).

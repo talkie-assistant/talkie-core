@@ -34,11 +34,11 @@ def repo(db_path: Path) -> HistoryRepo:
 
 def test_resolve_db_path_uses_config(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("persistence:\n  db_path: data/talkie.db\n")
-    db_full = tmp_path / "data" / "talkie.db"
+    config_path.write_text("persistence:\n  db_path: data/talkie-core.db\n")
+    db_full = tmp_path / "data" / "talkie-core.db"
     with patch(
         "history_cmd.load_config",
-        return_value={"persistence": {"db_path": "data/talkie.db"}},
+        return_value={"persistence": {"db_path": "data/talkie-core.db"}},
     ):
         with patch.object(Path, "cwd", return_value=tmp_path):
             path = history_cmd._resolve_db_path()

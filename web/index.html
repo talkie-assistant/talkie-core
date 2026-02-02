@@ -380,6 +380,14 @@
       margin-top: var(--spacing);
       width: 100%;
     }
+    #helpModal .help-module-content {
+      max-height: 60vh;
+      overflow: auto;
+    }
+    #helpModal .help-module-content h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
+    #helpModal .help-module-content h2 { font-size: 1.1rem; margin: 0.75rem 0 0.25rem; }
+    #helpModal .help-module-content table { margin: 0.5rem 0; }
+    #helpModal .help-module-content p { margin: 0.5rem 0; }
     /* Voice enrollment modal */
     #enrollOverlay {
       display: none;
@@ -492,6 +500,7 @@
           </tbody>
         </table>
       </div>
+      <div id="helpModulePanel" class="help-panel help-module-content" style="display:none;" aria-hidden="true"></div>
       <button type="button" id="helpClose" class="help-close">Close</button>
     </div>
   </div>
@@ -967,13 +976,45 @@
         function showHelp() {
           var helpOverlay = getHelpOverlay();
           if (!helpOverlay) return;
-          var isBrowse = !!window.__webMode;
           var titleEl = document.getElementById('helpModalTitle');
           var generalEl = document.getElementById('helpGeneral');
           var browseEl = document.getElementById('helpBrowse');
+          var modulePanel = document.getElementById('helpModulePanel');
+          if (activeModule) {
+            if (generalEl) { generalEl.style.display = 'none'; generalEl.setAttribute('aria-hidden', 'true'); }
+            if (browseEl) { browseEl.style.display = 'none'; browseEl.setAttribute('aria-hidden', 'true'); }
+            if (modulePanel) {
+              modulePanel.style.display = '';
+              modulePanel.setAttribute('aria-hidden', 'false');
+              modulePanel.innerHTML = '<p class="help-panel-desc">Loading...</p>';
+            }
+            if (titleEl) titleEl.textContent = 'Module help';
+            helpOverlay.classList.add('visible');
+            helpOverlay.setAttribute('aria-hidden', 'false');
+            var btn = getHelpClose();
+            if (btn) btn.focus();
+            fetch(location.origin + '/api/modules/' + encodeURIComponent(activeModule) + '/help')
+              .then(function (r) {
+                if (!r.ok) throw new Error(r.status);
+                return r.json();
+              })
+              .then(function (data) {
+                if (modulePanel && data.content) {
+                  modulePanel.innerHTML = data.content;
+                } else if (modulePanel) {
+                  modulePanel.innerHTML = '<p class="help-panel-desc">No help content.</p>';
+                }
+              })
+              .catch(function () {
+                if (modulePanel) modulePanel.innerHTML = '<p class="help-panel-desc">Could not load help.</p>';
+              });
+            return;
+          }
+          var isBrowse = !!window.__webMode;
           if (titleEl) titleEl.textContent = isBrowse ? 'Browse mode — Quick reference' : 'Quick reference';
           if (generalEl) { generalEl.style.display = isBrowse ? 'none' : ''; generalEl.setAttribute('aria-hidden', isBrowse ? 'true' : 'false'); }
           if (browseEl) { browseEl.style.display = isBrowse ? '' : 'none'; browseEl.setAttribute('aria-hidden', isBrowse ? 'false' : 'true'); }
+          if (modulePanel) { modulePanel.style.display = 'none'; modulePanel.setAttribute('aria-hidden', 'true'); modulePanel.innerHTML = ''; }
           helpOverlay.classList.add('visible');
           helpOverlay.setAttribute('aria-hidden', 'false');
           var btn = getHelpClose();

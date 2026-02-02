@@ -1,8 +1,8 @@
-# Talkie services: Chroma runs in Podman; Ollama disabled (use local ollama serve).
+# Talkie-core services: Chroma runs in Podman; Ollama disabled (use local ollama serve).
 # Infrastructure: Consul, KeyDB, HAProxy. Module servers: speech, rag, browser.
 # mem_limit per service caps container RAM so host (and local Ollama) have headroom.
 #
-# The Talkie UI (main window) is NOT in a container; it runs locally.
+# The Talkie-core UI (main window) is NOT in a container; it runs locally.
 # To see the UI: run ./talkie app (starts containers then launches the UI),
 # or after "podman compose up -d" run: pipenv run python run.py
 #
@@ -15,8 +15,8 @@ services:
   #   build:
   #     context: .
   #     dockerfile: Dockerfile.ollama
-  #   image: talkie-ollama:latest
-  #   container_name: talkie-ollama
+  #   image: talkie-core-ollama:latest
+  #   container_name: talkie-core-ollama
   #   ports:
   #     - "11434:11434"
   #   mem_limit: 8g
@@ -26,7 +26,7 @@ services:
   #     - OLLAMA_PRELOAD_MODELS=tinyllama
   #   restart: unless-stopped
   #   networks:
-  #     - talkie-network
+  #     - talkie-core-network
   #   healthcheck:
   #     test: ["CMD", "ollama", "list"]
   #     interval: 30s
@@ -36,7 +36,7 @@ services:
 
   chroma:
     image: chromadb/chroma:latest
-    container_name: talkie-chroma
+    container_name: talkie-core-chroma
     # Vector DB: 1g enough for typical doc sets; increase if large RAG index
     mem_limit: 1g
     ports:
@@ -45,7 +45,7 @@ services:
       - chroma_data:/data
     restart: unless-stopped
     networks:
-      - talkie-network
+      - talkie-core-network
     depends_on:
       consul-server:
         condition: service_started
@@ -54,7 +54,7 @@ services:
   # Infrastructure: Service Discovery
   consul-server:
     image: hashicorp/consul:1.22
-    container_name: talkie-consul-server
+    container_name: talkie-core-consul-server
     mem_limit: 256m
     # -ui last so it takes effect after config file merge; UI at http://localhost:8500/ui
     command:
@@ -73,7 +73,7 @@ services:
       - ./consul/consul.hcl:/consul/config/consul.hcl:ro
     restart: unless-stopped
     networks:
-      talkie-network:
+      talkie-core-network:
         ipv4_address: 172.30.0.2
     healthcheck:
       test: ["CMD", "consul", "members"]
@@ -85,7 +85,7 @@ services:
   # Note: Using port 6380 to avoid conflict with existing Redis on 6379
   keydb:
     image: eqalpha/keydb:latest
-    container_name: talkie-keydb
+    container_name: talkie-core-keydb
     mem_limit: 512m
     ports:
       - "6380:6379"  # External port 6380, internal 6379
@@ -93,7 +93,7 @@ services:
       - keydb_data:/data
     restart: unless-stopped
     networks:
-      - talkie-network
+      - talkie-core-network
     depends_on:
       consul-server:
         condition: service_started
@@ -108,7 +108,7 @@ services:
   # Note: Using port 8080 instead of 80 for rootless Podman compatibility
   haproxy:
     image: haproxy:latest
-    container_name: talkie-haproxy
+    container_name: talkie-core-haproxy
     mem_limit: 128m
     command: ["haproxy", "-W", "-db", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
     # Consul DNS is on 8600; HAProxy backends use resolvers consul (172.30.0.2:8600) in haproxy.cfg
@@ -121,7 +121,7 @@ services:
       - ./haproxy/dynamic:/usr/local/etc/haproxy/dynamic:ro
     restart: unless-stopped
     networks:
-      - talkie-network
+      - talkie-core-network
     depends_on:
       consul-server:
         condition: service_healthy
@@ -135,14 +135,14 @@ services:
   # Infrastructure: Metrics (temporarily disabled)
   # victoriametrics:
   #   image: victoriametrics/victoria-metrics:latest
-  #   container_name: talkie-victoriametrics
+  #   container_name: talkie-core-victoriametrics
   #   ports:
   #     - "8428:8428"
   #   volumes:
   #     - victoriametrics_data:/victoria-metrics-data
   #   restart: unless-stopped
   #   networks:
-  #     - talkie-network
+  #     - talkie-core-network
   #   command:
   #     - "--storageDataPath=/victoria-metrics-data"
   #     - "--httpListenAddr=:8428"
@@ -152,14 +152,14 @@ services:
 
   # vmagent:
   #   image: victoriametrics/vmagent:latest
-  #   container_name: talkie-vmagent
+  #   container_name: talkie-core-vmagent
   #   ports:
   #     - "8429:8429"
   #   volumes:
   #     - ./victoriametrics/vmagent.yaml:/etc/vmagent/vmagent.yaml:ro
   #   restart: unless-stopped
   #   networks:
-  #     - talkie-network
+  #     - talkie-core-network
   #   depends_on:
   #     - victoriametrics
   #   command:
@@ -170,7 +170,7 @@ services:
 
   # grafana:
   #   image: grafana/grafana:latest
-  #   container_name: talkie-grafana
+  #   container_name: talkie-core-grafana
   #   ports:
   #     - "3000:3000"
   #   volumes:
@@ -179,7 +179,7 @@ services:
   #     - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
   #   restart: unless-stopped
   #   networks:
-  #     - talkie-network
+  #     - talkie-core-network
   #   depends_on:
   #     - victoriametrics
   #   environment:
@@ -196,7 +196,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: talkie-speech
+    container_name: talkie-core-speech
     hostname: speech
     # STT (Whisper base/small) + TTS + speaker filter: model in RAM, 2g for Whisper base
     mem_limit: 2g
@@ -208,7 +208,7 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     networks:
-      - talkie-network
+      - talkie-core-network
     depends_on:
       consul-server:
         condition: service_healthy
@@ -229,7 +229,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: talkie-rag
+    container_name: talkie-core-rag
     hostname: rag
     # Chunk + embed (Ollama external) + Chroma client; 1g sufficient
     mem_limit: 1g
@@ -241,7 +241,7 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     networks:
-      - talkie-network
+      - talkie-core-network
     depends_on:
       consul-server:
         condition: service_healthy
@@ -263,7 +263,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: talkie-browser
+    container_name: talkie-core-browser
     hostname: browser
     # Python fetch/parse; no headless Chrome in container; 512m
     mem_limit: 512m
@@ -275,7 +275,7 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     networks:
-      - talkie-network
+      - talkie-core-network
     depends_on:
       consul-server:
         condition: service_healthy
@@ -298,12 +298,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: talkie-healthbeat
+    container_name: talkie-core-healthbeat
     mem_limit: 128m
     command: ["python", "-m", "modules.api.healthbeat", "--consul-host", "consul-server", "--keydb-host", "keydb", "--interval", "10.0"]
     restart: unless-stopped
     networks:
-      - talkie-network
+      - talkie-core-network
     depends_on:
       consul-server:
         condition: service_healthy
@@ -315,7 +315,7 @@ services:
       - KEYDB_PORT=6379
 
 networks:
-  talkie-network:
+  talkie-core-network:
     driver: bridge
     ipam:
       config:

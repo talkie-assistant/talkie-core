@@ -2,6 +2,8 @@
 
 The app discovers **modules** by scanning the `modules/` directory. Adding a new subdirectory with the required structure is enough for config to be merged; optional runtime wiring is documented below.
 
+**Developer requirements**: For the full self-contained module standard (manifest with version, docs in `docs/`, H-key help), see [modules/README.md](modules/README.md).
+
 **SDK**: Config normalization, speech abstractions, discovery, and logging for modules live in the **`sdk`** package. See [docs/SDK.md](docs/SDK.md) for full API and usage. Modules should use `sdk.get_rag_section(raw)`, `sdk.get_browser_section(raw)`, and `sdk.abstractions` (e.g. `AudioCapture`, `STTEngine`) instead of duplicating logic or importing from `app`.
 
 ## What the app recognizes
