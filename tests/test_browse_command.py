@@ -94,7 +94,14 @@ def test_is_browse_command_empty_returns_false(matcher: BrowseCommandMatcher) ->
 
 @pytest.mark.parametrize(
     "candidate",
-    ["close tab", "close", "scroll", "scroll up", "link for first result", "the link for feedback"],
+    [
+        "close tab",
+        "close",
+        "scroll",
+        "scroll up",
+        "link for first result",
+        "the link for feedback",
+    ],
 )
 def test_is_browse_command_close_scroll_link(
     matcher: BrowseCommandMatcher, candidate: str

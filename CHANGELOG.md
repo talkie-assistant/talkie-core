@@ -9,6 +9,9 @@
 
 ### Code quality and cleanup
 
+- **resample_int16:** Moved from `app/audio_utils.py` into `sdk/audio_utils.py`; `app/audio_utils` re-exports from SDK for backward compatibility. SDK and docs/SDK.md now document `chunk_rms_level`, `INT16_MAX`, and `resample_int16`.
+- **Docstrings:** `modules/speech/__init__.py` SpeechFactory docstring updated from "app.abstractions" to "sdk.abstractions". `tests/test_audio_utils.py` docstring updated to reflect SDK as source.
+- **Unused imports/vars:** Removed unused `git_available` (module_cmd.py), `MODULE_PREFIX` (tests/test_marketplace.py), `MagicMock` (tests/test_vosk_engine.py); fixed unused `e` in tests/test_api_marketplace.py. Added noqa for FastAPI `File(...)` in run_web.py (B008). Ruff F401/F841/B008 pass.
 - **chunk_rms_level:** Consolidated duplicate implementation from `app/audio_utils.py` and `modules/speech/audio/level.py` into `sdk/audio_utils.py`. App and speech module now use the SDK; `app/audio_utils` and `modules/speech/audio/level` re-export for backward compatibility. Speech server imports `chunk_rms_level` from `sdk.audio_utils`.
 - **Ruff F841:** Removed unused variable `conversation_context` in `app/pipeline.py` and unused mock binding in `tests/test_browser.py`. All ruff checks pass.
 - **Module servers:** Consolidated duplicate error response logic into `BaseModuleServer` helpers: `_service_unavailable_response()`, `_error_response(status_code, error_code, message)`, and `_require_service(service)`. Browser, RAG, and speech module servers now use these helpers instead of inline `JSONResponse` blocks. Metrics attributes are initialized before middleware that uses them.

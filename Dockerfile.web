@@ -1,0 +1,46 @@
+# Talkie Web UI container (production). Serves run_web.py on port 8765.
+FROM python:3.11-slim
+
+# Install system dependencies (incl. Pillow build deps: libjpeg/zlib/png)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libasound2-dev \
+    libportaudio2 \
+    libportaudiocpp0 \
+    ffmpeg \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    libjpeg62-turbo-dev \
+    zlib1g-dev \
+    libpng-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy dependency files (Pipfile.lock required for reproducible builds)
+COPY Pipfile Pipfile.lock ./
+COPY requirements.txt ./
+
+# Export lock to requirements in-container (markers evaluated for Linux; skips pyautogui)
+# then install with pip to avoid pipenv "Couldn't install package: {}" deploy bug
+RUN pip install --no-cache-dir pipenv && \
+    pipenv requirements > /tmp/requirements-lock.txt && \
+    pip install --no-cache-dir -r /tmp/requirements-lock.txt
+
+# Verify key dependencies are importable (fail build if any are missing)
+RUN python -c "import yaml; import fastapi; import chromadb; import consul; import redis; import httpx; import uvicorn"
+
+# Copy application code
+COPY . .
+
+# Create data directory
+RUN mkdir -p data
+
+EXPOSE 8765
+
+# Web UI (production)
+CMD ["python", "run_web.py"]

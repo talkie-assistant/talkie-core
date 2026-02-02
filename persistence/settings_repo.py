@@ -58,7 +58,9 @@ class SettingsRepo:
         def get_batch(conn: sqlite3.Connection) -> dict[str, str | None]:
             placeholders = ",".join("?" * len(keys))
             cur = conn.execute(
-                "SELECT key, value FROM user_settings WHERE key IN (" + placeholders + ")",
+                "SELECT key, value FROM user_settings WHERE key IN ("
+                + placeholders
+                + ")",
                 keys,
             )
             rows = cur.fetchall()

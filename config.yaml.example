@@ -1,0 +1,25 @@
+# Talkie config example. Copy to config.yaml and edit.
+# Production (image-only) mode: list which module containers to start.
+# Omit or leave empty in development; discovery uses modules/ on disk.
+modules:
+  enabled: [speech, rag, browser]
+  # Optional: pin image tag for production (default: latest). Or set TALKIE_IMAGE_TAG env.
+  # image_tag: latest
+
+# Minimal defaults; see config.yaml for full options.
+persistence:
+  db_path: "data/talkie.db"
+
+logging:
+  level: DEBUG
+  file: "talkie.log"
+
+infrastructure:
+  consul:
+    enabled: true
+    host: "localhost"
+    port: 8500
+  keydb:
+    enabled: true
+    host: "localhost"
+    port: 6379

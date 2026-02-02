@@ -131,3 +131,16 @@ class NoOpSpeakerFilter(SpeakerFilter):
 
     def accept(self, transcription: str, audio_bytes: bytes | None = None) -> bool:
         return True
+
+
+__all__ = [
+    "AudioCapture",
+    "MicrophoneError",
+    "NoOpCapture",
+    "NoOpSpeakerFilter",
+    "NoOpSTTEngine",
+    "NoOpTTSEngine",
+    "SpeakerFilter",
+    "STTEngine",
+    "TTSEngine",
+]

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sdk.discovery import (
+from sdk import (
     DEFAULT_CONFIG_FILENAME,
     MANIFEST_FILENAME,
     discover_modules as _discover_modules,

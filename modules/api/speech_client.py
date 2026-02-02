@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from app.abstractions import (
+from sdk import (
     AudioCapture,
     MicrophoneError,
     SpeakerFilter,
@@ -120,7 +120,9 @@ class RemoteSTTEngine(STTEngine):
         text, _ = self.transcribe_with_confidence(audio_bytes)
         return text
 
-    def transcribe_with_confidence(self, audio_bytes: bytes) -> tuple[str, float | None]:
+    def transcribe_with_confidence(
+        self, audio_bytes: bytes
+    ) -> tuple[str, float | None]:
         """Transcribe via remote server; returns (text, confidence or None)."""
         try:
             audio_base64 = self._client._encode_audio(audio_bytes)

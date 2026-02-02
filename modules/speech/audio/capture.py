@@ -8,7 +8,7 @@ import logging
 import struct
 from typing import Any, Callable, Iterator
 
-from sdk.abstractions import AudioCapture as AudioCaptureBase, MicrophoneError
+from sdk import AudioCapture as AudioCaptureBase, MicrophoneError
 from .constants import INT16_MAX, INT16_MIN
 from .level import chunk_rms_level
 

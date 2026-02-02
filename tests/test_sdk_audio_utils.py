@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import struct
 
-from sdk.audio_utils import INT16_MAX, chunk_rms_level
+from sdk import INT16_MAX, chunk_rms_level
 
 
 def test_int16_max_constant() -> None:

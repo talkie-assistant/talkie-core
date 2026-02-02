@@ -5,6 +5,6 @@ Re-exports SDK implementation for use within the speech module.
 
 from __future__ import annotations
 
-from sdk.audio_utils import chunk_rms_level
+from sdk import chunk_rms_level
 
 __all__ = ["chunk_rms_level"]

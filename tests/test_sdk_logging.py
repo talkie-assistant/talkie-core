@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from sdk.logging import get_logger
+from sdk import get_logger
 
 
 def test_get_logger_returns_logger() -> None:

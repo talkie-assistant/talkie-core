@@ -1,4 +1,4 @@
-"""Tests for sdk.discovery: get_modules_info, resolve_module_help_path, constants."""
+"""Tests for SDK discovery: get_modules_info, resolve_module_help_path, constants."""
 
 from __future__ import annotations
 
@@ -6,14 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from sdk.discovery import (
+from sdk import (
     DEFAULT_CONFIG_FILENAME,
     DEFAULT_DOCS_PATH,
     DEFAULT_HELP_ENTRY,
     DEFAULT_VERSION,
     MANIFEST_FILENAME,
-    get_modules_info,
+    discover_modules,
+    get_enabled_from_config,
     get_module_config_paths,
+    get_modules_info,
     resolve_module_help_path,
 )
 
@@ -75,9 +77,42 @@ def test_resolve_module_help_path_nonexistent_root() -> None:
 
 def test_get_module_config_paths_unchanged(modules_root: Path) -> None:
     """get_module_config_paths still returns paths only (backward compat)."""
-    from sdk.discovery import discover_modules
-
     paths = get_module_config_paths(modules_root)
     discovered = discover_modules(modules_root)
     assert len(paths) == len(discovered)
     assert all(p.is_file() for p in paths)
+
+
+# ---- get_enabled_from_config (production mode) ----
+def test_get_enabled_from_config_missing_file_returns_empty() -> None:
+    assert get_enabled_from_config(Path("/nonexistent/config.yaml")) == []
+
+
+def test_get_enabled_from_config_empty_yaml_returns_empty(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("")
+    assert get_enabled_from_config(cfg) == []
+
+
+def test_get_enabled_from_config_no_modules_returns_empty(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("persistence:\n  db_path: data/talkie.db\n")
+    assert get_enabled_from_config(cfg) == []
+
+
+def test_get_enabled_from_config_enabled_list_returns_ids(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("modules:\n  enabled: [speech, rag, browser]\n")
+    assert get_enabled_from_config(cfg) == ["speech", "rag", "browser"]
+
+
+def test_get_enabled_from_config_enabled_single_returns_list(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("modules:\n  enabled: [speech]\n")
+    assert get_enabled_from_config(cfg) == ["speech"]
+
+
+def test_get_enabled_from_config_enabled_empty_list(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("modules:\n  enabled: []\n")
+    assert get_enabled_from_config(cfg) == []

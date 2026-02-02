@@ -1,4 +1,4 @@
-the github """Tests for modules.discovery: discover_modules, get_module_config_paths, get_modules_info, resolve_module_help_path."""
+"""Tests for modules.discovery: discover_modules, get_module_config_paths, get_modules_info, resolve_module_help_path."""
 
 from __future__ import annotations
 
@@ -122,7 +122,9 @@ def test_get_modules_info_returns_list_with_expected_keys(modules_root: Path) ->
 
 
 def test_get_modules_info_version_default_when_missing(modules_root: Path) -> None:
-    (modules_root / "speech" / MANIFEST_FILENAME).write_text("name: speech\nenabled: true\n")
+    (modules_root / "speech" / MANIFEST_FILENAME).write_text(
+        "name: speech\nenabled: true\n"
+    )
     infos = get_modules_info(modules_root)
     speech_info = next((m for m in infos if m["id"] == "speech"), None)
     assert speech_info is not None
@@ -153,7 +155,9 @@ def test_get_modules_info_empty_for_nonexistent_root() -> None:
 
 
 def test_get_modules_info_respects_order(modules_root: Path) -> None:
-    (modules_root / "speech" / MANIFEST_FILENAME).write_text("name: speech\norder: 20\n")
+    (modules_root / "speech" / MANIFEST_FILENAME).write_text(
+        "name: speech\norder: 20\n"
+    )
     (modules_root / "rag" / MANIFEST_FILENAME).write_text("name: rag\norder: 10\n")
     infos = get_modules_info(modules_root)
     assert infos[0]["id"] == "rag"
@@ -185,18 +189,24 @@ def test_resolve_module_help_path_by_ui_id_when_file_exists(modules_root: Path) 
     assert "rag" in str(path)
 
 
-def test_resolve_module_help_path_returns_none_when_entry_missing(modules_root: Path) -> None:
+def test_resolve_module_help_path_returns_none_when_entry_missing(
+    modules_root: Path,
+) -> None:
     # No docs/README.md
     path = resolve_module_help_path("speech", modules_root)
     assert path is None
 
 
-def test_resolve_module_help_path_returns_none_for_unknown_id(modules_root: Path) -> None:
+def test_resolve_module_help_path_returns_none_for_unknown_id(
+    modules_root: Path,
+) -> None:
     path = resolve_module_help_path("unknown_module", modules_root)
     assert path is None
 
 
-def test_resolve_module_help_path_uses_custom_docs_path_and_entry(modules_root: Path) -> None:
+def test_resolve_module_help_path_uses_custom_docs_path_and_entry(
+    modules_root: Path,
+) -> None:
     (modules_root / "speech" / MANIFEST_FILENAME).write_text(
         "name: speech\nversion: '1.0'\ndocs_path: help\nhelp_entry: index.md\n"
     )

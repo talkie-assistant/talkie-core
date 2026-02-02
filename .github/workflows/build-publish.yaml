@@ -1,0 +1,107 @@
+# Build and push talkie-core + module images to GHCR on push/merge to main.
+# Images: ghcr.io/talkie-assistant/talkie-core, talkie-module-speech, talkie-module-rag, talkie-module-browser, talkie-module-healthbeat
+name: Build and publish containers
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: build-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  CORE_IMAGE: ghcr.io/talkie-assistant/talkie-core
+
+jobs:
+  build-push:
+    name: Build and push images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set short SHA
+        id: meta
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Build and push talkie-core (Web UI)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.web
+          push: true
+          tags: |
+            ${{ env.CORE_IMAGE }}:${{ github.ref_name }}
+            ${{ env.CORE_IMAGE }}:sha-${{ steps.meta.outputs.sha_short }}
+            ${{ env.CORE_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push talkie-module-speech
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./modules/speech/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/talkie-assistant/talkie-module-speech:${{ github.ref_name }}
+            ghcr.io/talkie-assistant/talkie-module-speech:sha-${{ steps.meta.outputs.sha_short }}
+            ghcr.io/talkie-assistant/talkie-module-speech:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push talkie-module-rag
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./modules/rag/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/talkie-assistant/talkie-module-rag:${{ github.ref_name }}
+            ghcr.io/talkie-assistant/talkie-module-rag:sha-${{ steps.meta.outputs.sha_short }}
+            ghcr.io/talkie-assistant/talkie-module-rag:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push talkie-module-browser
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./modules/browser/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/talkie-assistant/talkie-module-browser:${{ github.ref_name }}
+            ghcr.io/talkie-assistant/talkie-module-browser:sha-${{ steps.meta.outputs.sha_short }}
+            ghcr.io/talkie-assistant/talkie-module-browser:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push talkie-module-healthbeat
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./modules/api/Dockerfile.healthbeat
+          push: true
+          tags: |
+            ghcr.io/talkie-assistant/talkie-module-healthbeat:${{ github.ref_name }}
+            ghcr.io/talkie-assistant/talkie-module-healthbeat:sha-${{ steps.meta.outputs.sha_short }}
+            ghcr.io/talkie-assistant/talkie-module-healthbeat:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

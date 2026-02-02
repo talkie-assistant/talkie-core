@@ -4,7 +4,16 @@
 			"path": "."
 		},
 		{
-			"path": "../talkie.wiki"
+			"path": "../talkie-core.wiki"
+		},
+		{
+			"path": "../talkie-module-browser"
+		},
+		{
+			"path": "../talkie-module-rag"
+		},
+		{
+			"path": "../talkie-module-speech"
 		}
 	],
 	"settings": {}

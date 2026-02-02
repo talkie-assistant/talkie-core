@@ -20,7 +20,7 @@ _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from config import AppConfig  # noqa: E402
+from config import AppConfig, get_modules_enabled  # noqa: E402
 from run import bootstrap_config_and_db  # noqa: E402
 from starlette.requests import Request  # noqa: E402 module-level so FastAPI can resolve request: Request in route handlers
 
@@ -192,9 +192,37 @@ def main() -> None:
     web_capture.set_sensitivity(sens)
 
     connections_ref = {"connections": set(), "loop": None}
+    app = create_app(config, db_path, web_capture, connections_ref)
+    import uvicorn
+
+    logger.info("Talkie web UI: http://%s:%s", WEB_HOST, WEB_PORT)
+    uvicorn.run(app, host=WEB_HOST, port=WEB_PORT)
+
+
+def create_app(
+    config: AppConfig,
+    db_path: Path,
+    web_capture,
+    connections_ref: dict,
+    root: Path | None = None,
+):
+    """Build the FastAPI app (for running or testing). root defaults to project root."""
+    app_root = root or _ROOT
+    web_dir = app_root / "web"
+
     deps = _create_pipeline_and_app(config, db_path, web_capture, connections_ref)
     pipeline = deps["pipeline"]
     history_repo = deps["history_repo"]
+    # Production mode: no modules/ on disk; config.modules.enabled is source of truth for /api/modules
+    try:
+        from modules.discovery import get_modules_info
+        _discovered_infos = get_modules_info(app_root / "modules")
+    except Exception:
+        _discovered_infos = []
+    _production_mode = (
+        os.environ.get("TALKIE_PRODUCTION") == "1"
+        or (len(_discovered_infos) == 0 and bool(get_modules_enabled(config._raw)))
+    )
     settings_repo = deps["settings_repo"]
     training_repo = deps["training_repo"]
     rag_service = deps["rag_service"]
@@ -275,7 +303,6 @@ def main() -> None:
         allow_headers=["*"],
     )
     app.add_middleware(RequestLogMiddleware)
-    web_dir = _ROOT / "web"
 
     @app.get("/")
     async def index():
@@ -548,7 +575,7 @@ def main() -> None:
         try:
             from modules.discovery import get_modules_info
 
-            infos = get_modules_info(_ROOT / "modules")
+            infos = get_modules_info(app_root / "modules")
             return {
                 "modules": [
                     {
@@ -571,7 +598,7 @@ def main() -> None:
         try:
             from modules.discovery import resolve_module_help_path
 
-            help_path = resolve_module_help_path(module_id, _ROOT / "modules")
+            help_path = resolve_module_help_path(module_id, app_root / "modules")
             if help_path is None or not help_path.is_file():
                 return JSONResponse(
                     status_code=404, content={"error": "Module or help entry not found"}
@@ -591,9 +618,96 @@ def main() -> None:
             return {"content": html, "format": "html"}
         except Exception as e:
             logger.debug("Module help failed: %s", e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+    # Marketplace: list org module repos and install as submodules
+    _marketplace_org = os.environ.get("TALKIE_MARKETPLACE_ORG", "talkie-assistant")
+    _install_attempts: list[
+        tuple[float, str]
+    ] = []  # (monotonic_time, client_host) for rate limit
+
+    @app.get("/api/marketplace/git-available")
+    async def api_marketplace_git_available():
+        """Return whether the app root is a git repo (install only works in a clone)."""
+        try:
+            from marketplace import git_available
+
+            return {"git_available": git_available(app_root)}
+        except Exception as e:
+            logger.debug("git_available check failed: %s", e)
+            return {"git_available": False}
+
+    @app.get("/api/marketplace/modules")
+    async def api_marketplace_modules():
+        """List modules from org (talkie-module-*) merged with installed; cached briefly."""
+        try:
+            from marketplace import list_marketplace_modules
+
+            modules = list_marketplace_modules(app_root, _marketplace_org)
+            return {"modules": modules}
+        except Exception as e:
+            logger.warning("Marketplace list failed: %s", e)
+            return {"modules": [], "error": "Could not load marketplace"}
+
+    @app.post("/api/marketplace/install")
+    async def api_marketplace_install(request: Request):
+        """Install a module repo as git submodule. Body: { \"repo_name\": \"talkie-module-<name>\" }."""
+        import time as time_module
+
+        client_host = request.client.host if request.client else "unknown"
+        now = time_module.monotonic()
+        # Rate limit: 5 installs per IP per 60 seconds
+        _install_attempts[:] = [(t, h) for t, h in _install_attempts if now - t < 60]
+        if sum(1 for _, h in _install_attempts if h == client_host) >= 5:
             return JSONResponse(
-                status_code=500, content={"error": str(e)}
+                status_code=429,
+                content={"error": "Too many installs; try again in a minute"},
             )
+        _install_attempts.append((now, client_host))
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+        if not isinstance(body, dict):
+            return JSONResponse(
+                status_code=400, content={"error": "repo_name required"}
+            )
+
+        repo_name = body.get("repo_name")
+        if not repo_name or not isinstance(repo_name, str):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "repo_name required"},
+            )
+        repo_name = repo_name.strip()
+        if not repo_name:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "repo_name required"},
+            )
+        try:
+            from marketplace import install_module
+
+            loop = asyncio.get_event_loop()
+            ok, message, status_code = await loop.run_in_executor(
+                None,
+                lambda: install_module(app_root, _marketplace_org, repo_name),
+            )
+            if ok:
+                return {
+                    "ok": True,
+                    "path": message,
+                    "message": "Module added. Restart the app (or reload the page and reconnect) to load it.",
+                }
+            if status_code == 409:
+                return JSONResponse(
+                    status_code=409, content={"error": "already installed"}
+                )
+            return JSONResponse(status_code=status_code, content={"error": message})
+        except Exception as e:
+            logger.exception("Marketplace install failed: %s", e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
 
     @app.get("/api/documents")
     async def api_documents_list():
@@ -602,7 +716,7 @@ def main() -> None:
         return {"sources": rag_service.list_indexed_sources()}
 
     @app.post("/api/documents/upload")
-    async def api_documents_upload(files: list[UploadFile] = File(...)):
+    async def api_documents_upload(files: list[UploadFile] = File(...)):  # noqa: B008
         if rag_service is None:
             return JSONResponse(status_code=503, content={"error": "RAG not available"})
         paths = []
@@ -690,10 +804,7 @@ def main() -> None:
 
     _ws_handler_ref[0] = websocket_endpoint
 
-    import uvicorn
-
-    logger.info("Talkie web UI: http://%s:%s", WEB_HOST, WEB_PORT)
-    uvicorn.run(app, host=WEB_HOST, port=WEB_PORT)
+    return app
 
 
 if __name__ == "__main__":

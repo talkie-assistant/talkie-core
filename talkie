@@ -1,11 +1,30 @@
 #!/usr/bin/env bash
 # Talkie service management CLI
-# Usage: ./talkie <command> [options]
+# Usage: ./talkie [--dev|--production] <command> [options]
+# Development: compose.yaml, build from source, Web UI via pipenv locally.
+# Production: compose.production.yaml, image-only, Web UI in talkie-core container.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# Parse --dev / --production before other args (so main sees command as $1)
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dev|-d)
+            export TALKIE_DEV=1
+            shift
+            ;;
+        --production)
+            export TALKIE_DEV=0
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 
 # Colors for output
 RED='\033[0;31m'
@@ -28,6 +47,47 @@ log_error() {
 
 log_debug() {
     echo -e "${BLUE}[DEBUG]${NC} $1"
+}
+
+# Development vs production mode.
+# Dev: compose.yaml, build from source, Web UI via pipenv locally.
+# Production: compose.production.yaml, image-only, Web UI in talkie-core container.
+# Default: dev when inside repo (compose.yaml + modules/ present); else production.
+_is_dev_mode() {
+    if [ "${TALKIE_DEV:-}" = "1" ]; then return 0; fi
+    if [ "${TALKIE_DEV:-}" = "0" ]; then return 1; fi
+    [ -f "$SCRIPT_DIR/compose.yaml" ] && [ -d "$SCRIPT_DIR/modules" ] && return 0
+    return 1
+}
+
+_is_production_mode() {
+    _is_dev_mode && return 1 || return 0
+}
+
+# Compose file and service list depend on mode
+_set_compose_mode() {
+    if _is_dev_mode; then
+        export COMPOSE_FILE="${COMPOSE_FILE:-$SCRIPT_DIR/compose.yaml}"
+        COMPOSE_SERVICES="consul-server keydb haproxy chroma speech rag browser healthbeat"
+    else
+        export COMPOSE_FILE="${COMPOSE_FILE:-$SCRIPT_DIR/compose.production.yaml}"
+        _production_services_list
+    fi
+}
+
+# Build COMPOSE_SERVICES for production: infra + healthbeat + modules.enabled from config
+_production_services_list() {
+    local cfg="${TALKIE_CONFIG:-$SCRIPT_DIR/config.yaml}"
+    local mods=""
+    if [ -f "$cfg" ]; then
+        # enabled: [speech, rag, browser] or multi-line enabled: - speech
+        mods=$(grep -E 'enabled:\s*\[' "$cfg" 2>/dev/null | sed 's/.*enabled:\s*\[\([^]]*\)\].*/\1/' | tr ',' ' ' | tr -d '\r')
+        if [ -z "$mods" ]; then
+            mods=$(awk '/^modules:/,/^[a-z]/ { if (/^\s+-\s+/) { gsub(/^[[:space:]]*-[[:space:]]*/, ""); print } }' "$cfg" 2>/dev/null | tr '\n' ' ')
+        fi
+    fi
+    [ -z "$mods" ] && mods="speech rag browser"
+    COMPOSE_SERVICES="talkie-core consul-server keydb haproxy chroma $mods healthbeat"
 }
 
 # Check if podman is installed
@@ -55,13 +115,70 @@ check_podman_compose() {
     fi
 }
 
-# Initialize compose command
+# Compose project name (directory name when not set); used for network name and compose
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$SCRIPT_DIR")}"
+[ -z "$COMPOSE_PROJECT_NAME" ] && { log_warn "COMPOSE_PROJECT_NAME empty; using talkie-core"; COMPOSE_PROJECT_NAME="talkie-core"; }
+export COMPOSE_PROJECT_NAME
+CONTAINER_PREFIX="${COMPOSE_PROJECT_NAME}-"
+# Single compose service names (for: ./talkie start haproxy, etc.). Ollama disabled (use local ollama serve).
+COMPOSE_SERVICES="consul-server keydb haproxy chroma speech rag browser healthbeat"
+
+# Initialize compose command and set COMPOSE_FILE / COMPOSE_SERVICES by mode
 init_compose() {
+    _set_compose_mode
     check_podman
     check_podman_compose
 }
 
+# Validate compose file and env before first up (fail fast on invalid YAML or missing env).
+_validate_compose_config() {
+    if ! $COMPOSE_CMD config >/dev/null 2>&1; then
+        log_error "Compose config invalid. Run: $COMPOSE_CMD config"
+        exit 1
+    fi
+}
+
+# Stop and remove all project containers (so a conflicting network can be removed).
+_stop_remove_talkie_containers() {
+    local svc
+    _set_compose_mode
+    for svc in $COMPOSE_SERVICES; do
+        podman stop "${CONTAINER_PREFIX}${svc}" 2>/dev/null || true
+        podman rm -f "${CONTAINER_PREFIX}${svc}" 2>/dev/null || true
+    done
+}
+
+# Remove any podman network using our subnet (172.30.0.0/24) that is not the current project's
+# network, so compose can create talkie-core_talkie-core-network (or ${project}_talkie-core-network).
+# Stops/removes talkie containers on conflicting networks if needed. Safe to call before start/restart and after stop.
+clear_conflicting_talkie_networks() {
+    local expected_net="${COMPOSE_PROJECT_NAME}_talkie-core-network"
+    local net subnet
+    while IFS= read -r net; do
+        [ -z "$net" ] && continue
+        subnet=$(podman network inspect "$net" --format '{{ range .Subnets }}{{ .Subnet }}{{ end }}' 2>/dev/null)
+        if [ "$subnet" = "172.30.0.0/24" ] && [ "$net" != "$expected_net" ]; then
+            log_info "Removing conflicting network $net (subnet 172.30.0.0/24) so current project network can be used."
+            if podman network rm "$net" 2>/dev/null; then
+                log_info "Removed $net"
+            elif podman network rm -f "$net" 2>/dev/null; then
+                log_info "Removed $net (and any containers attached to it)."
+            else
+                log_info "Stopping and removing talkie containers on $net, then removing network..."
+                _stop_remove_talkie_containers
+                sleep 1
+                if podman network rm "$net" 2>/dev/null || podman network rm -f "$net" 2>/dev/null; then
+                    log_info "Removed $net"
+                else
+                    log_warn "Could not remove $net."
+                fi
+            fi
+        fi
+    done < <(podman network ls --format '{{.Name}}' 2>/dev/null)
+}
+
 # Ensure talkie network exists (matches compose.yaml: subnet 172.30.0.0/24, labels for Docker Compose)
+# Only used when project name is "talkie" (legacy); otherwise compose creates the network.
 ensure_talkie_network() {
     if ! podman network exists talkie_talkie-network 2>/dev/null; then
         log_info "Creating talkie network (talkie_talkie-network)..."
@@ -75,9 +192,6 @@ ensure_talkie_network() {
     fi
 }
 
-# Single compose service names (for: ./talkie start haproxy, etc.). Ollama disabled (use local ollama serve).
-COMPOSE_SERVICES="consul-server keydb haproxy chroma speech rag browser healthbeat"
-
 # Start services
 cmd_start() {
     local services="${1:-all}"
@@ -87,42 +201,71 @@ cmd_start() {
         cmd_web_start
         return
     fi
+    init_compose
     for svc in $COMPOSE_SERVICES; do
         if [ "$services" = "$svc" ]; then
             init_compose
+            _validate_compose_config
+            clear_conflicting_talkie_networks
             log_info "Starting $services..."
             if ! $COMPOSE_CMD up -d "$services"; then
-                log_info "Starting existing container talkie-$services..."
-                podman start "talkie-$services" || { log_error "Failed to start talkie-$services"; return 1; }
+                log_info "Starting existing container ${CONTAINER_PREFIX}$services..."
+                podman start "${CONTAINER_PREFIX}$services" || { log_error "Failed to start ${CONTAINER_PREFIX}$services"; return 1; }
             fi
             return
         fi
     done
 
     init_compose
+    _validate_compose_config
     log_info "Starting Talkie services..."
 
     if [ "$services" = "all" ]; then
-        ensure_talkie_network
-        if ! $COMPOSE_CMD up -d consul-server keydb haproxy chroma speech rag browser healthbeat; then
-            log_info "Recreating network and retrying..."
-            for c in talkie-consul-server talkie-keydb talkie-haproxy talkie-chroma talkie-speech talkie-rag talkie-browser talkie-healthbeat; do
-                podman stop "$c" 2>/dev/null || true
-            done
-            podman network rm talkie_talkie-network 2>/dev/null || true
-            sleep 1
-            $COMPOSE_CMD up -d consul-server keydb haproxy chroma speech rag browser healthbeat
+        clear_conflicting_talkie_networks
+        [ "$COMPOSE_PROJECT_NAME" = "talkie" ] && ensure_talkie_network
+        if _is_production_mode; then
+            log_info "Production mode: pulling images then starting services..."
+            $COMPOSE_CMD pull $COMPOSE_SERVICES 2>/dev/null || true
+            if ! $COMPOSE_CMD up -d $COMPOSE_SERVICES; then
+                log_info "Recreating network and retrying..."
+                for svc in $COMPOSE_SERVICES; do
+                    podman stop "${CONTAINER_PREFIX}${svc}" 2>/dev/null || true
+                done
+                clear_conflicting_talkie_networks
+                sleep 1
+                $COMPOSE_CMD up -d $COMPOSE_SERVICES
+            fi
+            log_info "All services started (Web UI in talkie-core container). http://localhost:8765"
+        else
+            if ! $COMPOSE_CMD up -d $COMPOSE_SERVICES; then
+                log_info "Recreating network and retrying..."
+                for svc in $COMPOSE_SERVICES; do
+                    podman stop "${CONTAINER_PREFIX}${svc}" 2>/dev/null || true
+                done
+                clear_conflicting_talkie_networks
+                sleep 1
+                $COMPOSE_CMD up -d $COMPOSE_SERVICES
+            fi
+            log_info "Starting Web UI (background)..."
+            cmd_web_start
+            log_info "All services started"
         fi
-        log_info "Starting Web UI (background)..."
-        cmd_web_start
-        log_info "All services started"
         cmd_status
     elif [ "$services" = "core" ]; then
+        clear_conflicting_talkie_networks
         log_info "Starting core services (Chroma; Ollama is local)..."
         $COMPOSE_CMD up -d chroma
     elif [ "$services" = "modules" ]; then
+        clear_conflicting_talkie_networks
         log_info "Starting module servers..."
-        $COMPOSE_CMD up -d speech rag browser healthbeat
+        if _is_production_mode; then
+            local mods=""
+            [ -f "${TALKIE_CONFIG:-$SCRIPT_DIR/config.yaml}" ] && mods=$(grep -E 'enabled:\s*\[' "${TALKIE_CONFIG:-$SCRIPT_DIR/config.yaml}" 2>/dev/null | sed 's/.*enabled:\s*\[\([^]]*\)\].*/\1/' | tr ',' ' ' | tr -d '\r')
+            [ -z "$mods" ] && mods="speech rag browser"
+            $COMPOSE_CMD up -d $mods healthbeat
+        else
+            $COMPOSE_CMD up -d speech rag browser healthbeat
+        fi
     fi
 
     if [ "$services" = "all" ]; then
@@ -158,23 +301,31 @@ cmd_stop() {
 
     if [ "$services" = "all" ]; then
         cmd_web_stop
+        if _is_production_mode; then
+            log_info "Stopping all production services..."
+            $COMPOSE_CMD stop $COMPOSE_SERVICES 2>/dev/null || true
+            clear_conflicting_talkie_networks
+        fi
     fi
 
-    if [ "$services" = "all" ] || [ "$services" = "modules" ]; then
-        log_info "Stopping module servers..."
-        $COMPOSE_CMD stop speech rag browser healthbeat 2>/dev/null || true
-    fi
+    if [ "$services" != "all" ] || ! _is_production_mode; then
+        if [ "$services" = "all" ] || [ "$services" = "modules" ]; then
+            log_info "Stopping module servers..."
+            $COMPOSE_CMD stop speech rag browser healthbeat 2>/dev/null || true
+        fi
 
-    if [ "$services" = "all" ] || [ "$services" = "core" ]; then
-        log_info "Stopping core services..."
-        $COMPOSE_CMD stop chroma 2>/dev/null || true
-    fi
+        if [ "$services" = "all" ] || [ "$services" = "core" ]; then
+            log_info "Stopping core services..."
+            $COMPOSE_CMD stop chroma 2>/dev/null || true
+        fi
 
-    if [ "$services" = "all" ]; then
-        log_info "Stopping infrastructure services..."
-        for svc in consul-server keydb haproxy; do
-            $COMPOSE_CMD stop "$svc" 2>/dev/null || true
-        done
+        if [ "$services" = "all" ]; then
+            log_info "Stopping infrastructure services..."
+            for svc in consul-server keydb haproxy; do
+                $COMPOSE_CMD stop "$svc" 2>/dev/null || true
+            done
+            clear_conflicting_talkie_networks
+        fi
     fi
 
     log_info "Services stopped"
@@ -191,24 +342,30 @@ cmd_restart() {
         cmd_web_restart
         return
     fi
+    init_compose
     for svc in $COMPOSE_SERVICES; do
         if [ "$services" = "$svc" ]; then
-            init_compose
-            log_info "Building $services (so code changes are in the image)..."
-            $COMPOSE_CMD build "$services"
-            log_info "Recreating $services container..."
-            $COMPOSE_CMD up -d --force-recreate "$services"
+            if _is_production_mode; then
+                log_info "Recreating $services container..."
+                $COMPOSE_CMD up -d --force-recreate "$services"
+            else
+                log_info "Building $services (so code changes are in the image)..."
+                $COMPOSE_CMD build "$services"
+                log_info "Recreating $services container..."
+                $COMPOSE_CMD up -d --force-recreate "$services"
+            fi
             return
         fi
     done
 
     if [ "$services" = "all" ]; then
-        init_compose
         log_info "Stopping all services..."
         cmd_stop "all"
         sleep 2
-        log_info "Building images (if needed due to changes)..."
-        $COMPOSE_CMD build
+        if ! _is_production_mode; then
+            log_info "Building images (if needed due to changes)..."
+            $COMPOSE_CMD build
+        fi
         log_info "Starting all services..."
         cmd_start "all"
         return
@@ -225,6 +382,15 @@ cmd_restart() {
 WEB_PID_FILE="$SCRIPT_DIR/.talkie-web.pid"
 
 cmd_web_start() {
+    if _is_production_mode; then
+        init_compose
+        _validate_compose_config
+        log_info "Starting Talkie Web UI (talkie-core container)..."
+        $COMPOSE_CMD pull talkie-core 2>/dev/null || true
+        $COMPOSE_CMD up -d talkie-core
+        log_info "Web UI running in container. http://localhost:8765"
+        return
+    fi
     if [ -f "$WEB_PID_FILE" ]; then
         local pid
         pid=$(cat "$WEB_PID_FILE")
@@ -257,6 +423,13 @@ cmd_web_start() {
 }
 
 cmd_web_stop() {
+    if _is_production_mode; then
+        init_compose
+        log_info "Stopping Talkie Web UI (talkie-core container)..."
+        $COMPOSE_CMD stop talkie-core 2>/dev/null || true
+        log_info "Web UI container stopped"
+        return
+    fi
     if [ -f "$WEB_PID_FILE" ]; then
         local pid
         pid=$(cat "$WEB_PID_FILE")
@@ -288,6 +461,19 @@ web_port_listening() {
 }
 
 cmd_web_status() {
+    if _is_production_mode; then
+        init_compose
+        if podman ps --format "{{.Names}}" | grep -q "^${CONTAINER_PREFIX}talkie-core$"; then
+            if curl -s -f http://localhost:8765/ > /dev/null 2>&1; then
+                echo -e "Web UI: ${GREEN}running${NC} (talkie-core container). http://localhost:8765"
+            else
+                echo -e "Web UI: container running but ${YELLOW}port 8765 not responding${NC}"
+            fi
+        else
+            echo -e "Web UI: ${RED}stopped${NC}. Run: ./talkie start web"
+        fi
+        return
+    fi
     if [ -f "$WEB_PID_FILE" ]; then
         local pid
         pid=$(cat "$WEB_PID_FILE")
@@ -398,7 +584,7 @@ app_setup_data_dir() {
 
 # Register chroma (and optionally ollama) with Consul so *.service.consul resolves. Ollama disabled (local).
 app_register_consul_services() {
-    if ! is_container_running "talkie-consul-server"; then
+    if ! is_container_running "${CONTAINER_PREFIX}consul-server"; then
         return
     fi
     local consul_addr="http://localhost:8500"
@@ -409,7 +595,7 @@ app_register_consul_services() {
     for name in chroma; do
         local cid port
         case "$name" in
-            chroma) cid="talkie-chroma"; port=8000 ;;
+            chroma) cid="${CONTAINER_PREFIX}chroma"; port=8000 ;;
             *) continue ;;
         esac
         if ! is_container_running "$cid"; then
@@ -482,6 +668,18 @@ cmd_app() {
         esac
     done
     init_compose
+    _validate_compose_config
+    if _is_production_mode; then
+        log_info "Starting Talkie (production: all services from images, Web UI in talkie-core container)..."
+        clear_conflicting_talkie_networks
+        log_info "Pulling images..."
+        $COMPOSE_CMD pull $COMPOSE_SERVICES 2>/dev/null || true
+        log_info "Starting services..."
+        $COMPOSE_CMD up -d $COMPOSE_SERVICES
+        log_info "Talkie is running. Web UI: http://localhost:8765"
+        cmd_status
+        return
+    fi
     log_info "Starting Talkie (services in containers, Web UI runs locally)..."
     [ "$LOCAL_ONLY" -eq 1 ] && log_info "Local-only: module servers will not be started"
     echo ""
@@ -494,22 +692,23 @@ cmd_app() {
     local INFRA_SERVICES=(consul-server keydb haproxy)
     local NEED_INFRA=false
     for sn in "${INFRA_SERVICES[@]}"; do
-        if ! is_container_running "talkie-$sn"; then NEED_INFRA=true; break; fi
+        if ! is_container_running "${CONTAINER_PREFIX}$sn"; then NEED_INFRA=true; break; fi
     done
     if [ "$NEED_INFRA" = true ]; then
-        ensure_talkie_network
+        clear_conflicting_talkie_networks
+        [ "$COMPOSE_PROJECT_NAME" = "talkie" ] && ensure_talkie_network
         $COMPOSE_CMD up -d "${INFRA_SERVICES[@]}"
         log_info "Waiting for infrastructure (20s)..."
         sleep 20
     fi
-    app_health_check_service "Consul" "talkie-consul-server" "http://localhost:8500/v1/status/leader" || log_warn "Consul health check failed"
-    is_container_running "talkie-keydb" && podman exec talkie-keydb keydb-cli ping > /dev/null 2>&1 && log_info "KeyDB is ready" || log_warn "KeyDB failed"
-    app_health_check_service "HAProxy" "talkie-haproxy" "http://localhost:8404/" || log_warn "HAProxy health check failed"
+    app_health_check_service "Consul" "${CONTAINER_PREFIX}consul-server" "http://localhost:8500/v1/status/leader" || log_warn "Consul health check failed"
+    is_container_running "${CONTAINER_PREFIX}keydb" && podman exec "${CONTAINER_PREFIX}keydb" keydb-cli ping > /dev/null 2>&1 && log_info "KeyDB is ready" || log_warn "KeyDB failed"
+    app_health_check_service "HAProxy" "${CONTAINER_PREFIX}haproxy" "http://localhost:8404/" || log_warn "HAProxy health check failed"
     log_info "Ensuring application services (Chroma; Ollama is local)..."
     local APP_SERVICES=(chroma)
     local NEED_APP=false
     for sn in "${APP_SERVICES[@]}"; do
-        if ! is_container_running "talkie-$sn"; then NEED_APP=true; break; fi
+        if ! is_container_running "${CONTAINER_PREFIX}$sn"; then NEED_APP=true; break; fi
     done
     if [ "$NEED_APP" = true ]; then
         $COMPOSE_CMD up -d "${APP_SERVICES[@]}"
@@ -521,11 +720,11 @@ cmd_app() {
     else
         log_warn "Ollama not responding at localhost:11434. Run: ollama serve"
     fi
-    app_health_check_service "Chroma" "talkie-chroma" "http://localhost:8000/api/v1" || log_warn "Chroma may still be starting"
+    app_health_check_service "Chroma" "${CONTAINER_PREFIX}chroma" "http://localhost:8000/api/v1" || log_warn "Chroma may still be starting"
     app_register_consul_services
     if [ "$LOCAL_ONLY" -eq 0 ]; then
         log_info "Checking module servers..."
-        local MODULE_SERVICES=("speech:talkie-speech:http://localhost:8001/health" "rag:talkie-rag:http://localhost:8002/health" "browser:talkie-browser:http://localhost:8003/health")
+        local MODULE_SERVICES=("speech:${CONTAINER_PREFIX}speech:http://localhost:8001/health" "rag:${CONTAINER_PREFIX}rag:http://localhost:8002/health" "browser:${CONTAINER_PREFIX}browser:http://localhost:8003/health")
         local TO_START=() TO_RESTART=()
         for info in "${MODULE_SERVICES[@]}"; do
             IFS=':' read -r sn cn url <<< "$info"
@@ -554,9 +753,13 @@ cmd_logs() {
     
     if [ -z "$service" ]; then
         log_info "Available services:"
-        echo "  Infrastructure: consul-server, keydb, haproxy"
-        echo "  Core: chroma (Ollama is local)"
-        echo "  Modules: speech, rag, browser, healthbeat"
+        if _is_production_mode; then
+            echo "  talkie-core, consul-server, keydb, haproxy, chroma, speech, rag, browser, healthbeat"
+        else
+            echo "  Infrastructure: consul-server, keydb, haproxy"
+            echo "  Core: chroma (Ollama is local)"
+            echo "  Modules: speech, rag, browser, healthbeat"
+        fi
         echo ""
         echo "Usage: ./talkie logs <service> [--follow]"
         echo "Example: ./talkie logs consul-server --follow"
@@ -564,9 +767,9 @@ cmd_logs() {
     fi
     
     if [ "$follow" = "--follow" ] || [ "$follow" = "-f" ]; then
-        podman logs -f "talkie-$service" 2>/dev/null || log_error "Service 'talkie-$service' not found or not running"
+        podman logs -f "${CONTAINER_PREFIX}$service" 2>/dev/null || log_error "Service '${CONTAINER_PREFIX}$service' not found or not running"
     else
-        podman logs "talkie-$service" 2>/dev/null || log_error "Service 'talkie-$service' not found or not running"
+        podman logs "${CONTAINER_PREFIX}$service" 2>/dev/null || log_error "Service '${CONTAINER_PREFIX}$service' not found or not running"
     fi
 }
 
@@ -585,17 +788,163 @@ cmd_history() {
     ( cd "$SCRIPT_DIR" && pipenv run python history_cmd.py "$sub" "$@" )
 }
 
+# Module subcommands: list, add, rm, update (delegate to module_cmd.py or production shell)
+cmd_module() {
+    if _is_production_mode; then
+        _module_production "$@"
+        return $?
+    fi
+    if [ $# -eq 0 ]; then
+        ( cd "$SCRIPT_DIR" && pipenv run python module_cmd.py --help )
+        return $?
+    fi
+    ( cd "$SCRIPT_DIR" && pipenv run python module_cmd.py "$@" )
+}
+
+# Production: module list/add/rm without Python (config + podman)
+_module_production() {
+    local cfg="${TALKIE_CONFIG:-$SCRIPT_DIR/config.yaml}"
+    local org="${TALKIE_MARKETPLACE_ORG:-talkie-assistant}"
+    local tag="${TALKIE_IMAGE_TAG:-latest}"
+    _production_services_list  # sets COMPOSE_SERVICES; we need mods from config
+    local mods
+    mods=$(grep -E 'enabled:\s*\[' "$cfg" 2>/dev/null | sed 's/.*enabled:\s*\[\([^]]*\)\].*/\1/' | tr ',' ' ' | tr -d '\r')
+    [ -z "$mods" ] && mods=""
+    local sub="${1:-}"
+    shift || true
+    case "$sub" in
+        list)
+            if [ -z "$mods" ]; then
+                echo "No modules enabled (edit config modules.enabled)."
+                return
+            fi
+            echo "id     state"
+            for m in $mods; do echo "$m  enabled"; done
+            ;;
+        add)
+            local name="${1:-}"
+            if [ -z "$name" ]; then
+                log_error "Module name required. Usage: ./talkie module add <shortname>"
+                exit 1
+            fi
+            name=$(echo "$name" | sed 's/^talkie-module-//')
+            if ! echo "$name" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+                log_error "Invalid module name."
+                exit 1
+            fi
+            local image="ghcr.io/${org}/talkie-module-${name}:${tag}"
+            log_info "Pulling $image..."
+            if ! podman pull "$image"; then
+                log_error "podman pull failed. Check network and image name."
+                exit 2
+            fi
+            if echo " $mods " | grep -q " ${name} "; then
+                log_info "Module already enabled: $name"
+            else
+                # Append to modules.enabled (simplified: replace line with extended list)
+                local new_list="$mods $name"
+                new_list=$(echo "$new_list" | xargs)
+                if grep -q 'enabled:\s*\[' "$cfg" 2>/dev/null; then
+                    sed -i.bak "s/enabled: \[.*\]/enabled: [${new_list// /, }]/" "$cfg" 2>/dev/null || true
+                else
+                    echo "modules:" >> "$cfg"
+                    echo "  enabled: [$name]" >> "$cfg"
+                fi
+                log_info "Module added: $name (enabled in config)"
+            fi
+            echo "Run: ./talkie start to start the new module"
+            ;;
+        rm)
+            local name="${1:-}"
+            if [ -z "$name" ]; then
+                log_error "Module name required. Usage: ./talkie module rm <shortname>"
+                exit 1
+            fi
+            if ! echo " $mods " | grep -q " ${name} "; then
+                log_error "Module not enabled: $name"
+                exit 1
+            fi
+            new_list=$(echo " $mods " | sed "s/ ${name} //" | xargs)
+            sed -i.bak "s/enabled: \[.*\]/enabled: [${new_list// /, }]/" "$cfg" 2>/dev/null || true
+            log_info "Removed module from config: $name. Run ./talkie stop to stop the container."
+            ;;
+        list-available|update)
+            log_info "Production: use Web UI Marketplace to browse modules, or run from repo: pipenv run python module_cmd.py $sub $*"
+            ;;
+        *)
+            log_error "Unknown subcommand: $sub. Use: list, add, rm"
+            exit 1
+            ;;
+    esac
+}
+
+# Run tests by suite: unit (exclude e2e), e2e, synthetic (same as unit), all
+cmd_test() {
+    local suite="${1:-}"
+    if [ -z "$suite" ]; then
+        log_info "Usage: ./talkie test {unit|e2e|synthetic|all}"
+        echo "  unit     - run unit tests (exclude e2e)"
+        echo "  e2e      - run end-to-end browser tests"
+        echo "  synthetic - run synthetic/integration tests (currently same as unit)"
+        echo "  all      - run all tests"
+        exit 1
+    fi
+    app_check_python
+    app_install_deps
+    case "$suite" in
+        unit)
+            log_info "Running unit tests (excluding e2e)..."
+            ( cd "$SCRIPT_DIR" && pipenv run pytest tests/ -v -m "not e2e" )
+            ;;
+        e2e)
+            log_info "Running e2e tests..."
+            ( cd "$SCRIPT_DIR" && pipenv run pytest tests/e2e/ -v -m e2e )
+            ;;
+        synthetic)
+            log_info "Running synthetic tests..."
+            ( cd "$SCRIPT_DIR" && pipenv run pytest tests/ -v -m "not e2e" )
+            ;;
+        all)
+            log_info "Running all tests..."
+            ( cd "$SCRIPT_DIR" && pipenv run pytest tests/ -v )
+            ;;
+        *)
+            log_error "Unknown test suite: $suite"
+            echo "Use: ./talkie test {unit|e2e|synthetic|all}"
+            exit 1
+            ;;
+    esac
+}
+
 # Status and health (combined)
 cmd_status() {
     init_compose
     
     log_info "Talkie service status and health:"
+    if _is_production_mode; then
+        log_debug "Production mode (compose: $COMPOSE_FILE)"
+    fi
     echo ""
+    
+    # Production: show talkie-core (Web UI) first
+    if _is_production_mode; then
+        echo "Web UI (talkie-core):"
+        if podman ps --format "{{.Names}}" | grep -q "^${CONTAINER_PREFIX}talkie-core$"; then
+            if curl -s -f http://localhost:8765/ > /dev/null 2>&1; then
+                echo -e "  ${GREEN}✓${NC} talkie-core (running, healthy). http://localhost:8765"
+            else
+                echo -e "  ${YELLOW}!${NC} talkie-core (running, not responding)"
+            fi
+        else
+            echo -e "  ${RED}✗${NC} talkie-core (stopped)"
+        fi
+        echo ""
+    fi
     
     # Capture consul state once (container running + API reachable). Use 127.0.0.1 for curl to avoid IPv6/localhost quirks on macOS.
     _consul_running=0
     _consul_healthy=0
-    if podman ps --format "{{.Names}}" 2>/dev/null | grep -q "^talkie-consul-server$"; then
+    if podman ps --format "{{.Names}}" 2>/dev/null | grep -q "^${CONTAINER_PREFIX}consul-server$"; then
         _consul_running=1
         for _ in 1 2 3; do
             if curl -s -m 3 http://127.0.0.1:8500/v1/status/leader > /dev/null 2>&1; then
@@ -617,8 +966,8 @@ cmd_status() {
     else
         echo -e "  ${RED}✗${NC} consul-server (stopped)"
     fi
-    if podman ps --format "{{.Names}}" | grep -q "^talkie-keydb$"; then
-        if podman exec talkie-keydb keydb-cli ping > /dev/null 2>&1; then
+    if podman ps --format "{{.Names}}" | grep -q "^${CONTAINER_PREFIX}keydb$"; then
+        if podman exec "${CONTAINER_PREFIX}keydb" keydb-cli ping > /dev/null 2>&1; then
             echo -e "  ${GREEN}✓${NC} keydb (running, healthy)"
         else
             echo -e "  ${YELLOW}!${NC} keydb (running, not responding)"
@@ -626,7 +975,7 @@ cmd_status() {
     else
         echo -e "  ${RED}✗${NC} keydb (stopped)"
     fi
-    if podman ps --format "{{.Names}}" | grep -q "^talkie-haproxy$"; then
+    if podman ps --format "{{.Names}}" | grep -q "^${CONTAINER_PREFIX}haproxy$"; then
         if curl -s http://localhost:8404 > /dev/null 2>&1; then
             echo -e "  ${GREEN}✓${NC} haproxy (running, healthy)"
         else
@@ -643,7 +992,7 @@ cmd_status() {
     else
         echo -e "  ${RED}✗${NC} ollama (local, not running - run: ollama serve)"
     fi
-    if podman ps --format "{{.Names}}" | grep -q "^talkie-chroma$"; then
+    if podman ps --format "{{.Names}}" | grep -q "^${CONTAINER_PREFIX}chroma$"; then
         if curl -s http://localhost:8000/api/v1/heartbeat > /dev/null 2>&1; then
             echo -e "  ${GREEN}✓${NC} chroma (running, healthy)"
         else
@@ -658,7 +1007,7 @@ cmd_status() {
     for entry in "speech:8001" "rag:8002" "browser:8003"; do
         service="${entry%%:*}"
         port="${entry##*:}"
-        if podman ps --format "{{.Names}}" | grep -q "^talkie-$service$"; then
+        if podman ps --format "{{.Names}}" | grep -q "^${CONTAINER_PREFIX}$service$"; then
             if curl -s "http://localhost:$port/health" > /dev/null 2>&1; then
                 echo -e "  ${GREEN}✓${NC} $service (running, healthy)"
             else
@@ -668,7 +1017,7 @@ cmd_status() {
             echo -e "  ${RED}✗${NC} $service (stopped)"
         fi
     done
-    if podman ps --format "{{.Names}}" | grep -q "^talkie-healthbeat$"; then
+    if podman ps --format "{{.Names}}" | grep -q "^${CONTAINER_PREFIX}healthbeat$"; then
         echo -e "  ${GREEN}✓${NC} healthbeat (running)"
     else
         echo -e "  ${RED}✗${NC} healthbeat (stopped)"
@@ -686,7 +1035,7 @@ cmd_status() {
     else
         echo -e "  Consul UI: ${YELLOW}(not running)${NC} http://127.0.0.1:8500/ui  -- start: ./talkie start"
     fi
-    if podman ps --format "{{.Names}}" | grep -q "^talkie-haproxy$"; then
+    if podman ps --format "{{.Names}}" | grep -q "^${CONTAINER_PREFIX}haproxy$"; then
         echo "  HAProxy Stats: http://localhost:8404"
         echo "  HAProxy: http://localhost:8080"
     else
@@ -700,7 +1049,62 @@ cmd_ps() {
     init_compose
     
     log_info "Talkie containers:"
-    podman ps --filter "name=talkie-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+    podman ps --filter "name=${CONTAINER_PREFIX}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+}
+
+# Build container images (no start). Uses per-service Dockerfiles from compose.
+# ./talkie build [target] — target: all (default), or a service name (speech, rag, browser, healthbeat, etc.)
+cmd_build() {
+    local target="${1:-all}"
+    local svc
+
+    if _is_production_mode; then
+        log_info "Production mode: images are pre-built. Use: ./talkie pull to refresh images."
+        return 0
+    fi
+    if [ "$target" = "web" ]; then
+        log_info "Web UI has no container image; nothing to build."
+        return 0
+    fi
+
+    init_compose
+    _validate_compose_config
+
+    if [ "$target" = "all" ]; then
+        log_info "Building all images (module images use per-module Dockerfiles)..."
+        $COMPOSE_CMD build
+        log_info "Build complete"
+        return
+    fi
+
+    for svc in $COMPOSE_SERVICES; do
+        if [ "$target" = "$svc" ]; then
+            log_info "Building image for $target..."
+            $COMPOSE_CMD build "$target"
+            log_info "Build complete: $target"
+            return
+        fi
+    done
+
+    log_error "Unknown build target: $target"
+    echo "Use: ./talkie build [all|SERVICE]"
+    echo "Services with build: speech, rag, browser, healthbeat (others use pre-built images)."
+    exit 1
+}
+
+# Pull images (production: pull all from GHCR; dev: pull infra/base images only)
+cmd_pull() {
+    init_compose
+    _validate_compose_config
+    if _is_production_mode; then
+        log_info "Pulling production images (tag: ${TALKIE_IMAGE_TAG:-latest})..."
+        $COMPOSE_CMD pull $COMPOSE_SERVICES
+        log_info "Pull complete"
+    else
+        log_info "Pulling base/infra images (dev mode builds module images locally)..."
+        $COMPOSE_CMD pull 2>/dev/null || true
+        log_info "Use ./talkie build to build module images."
+    fi
 }
 
 # Rebuild images and recreate containers: all, changed [REF], or SPECIFIC_SERVICE
@@ -723,6 +1127,9 @@ cmd_rebuild() {
         return
     fi
 
+    init_compose
+    _validate_compose_config
+
     if [ "$target" = "changed" ]; then
         ref="${2:-HEAD}"
         cmd_restart_changed "$ref"
@@ -731,7 +1138,8 @@ cmd_rebuild() {
 
     if [ "$target" = "all" ]; then
         init_compose
-        log_info "Rebuilding all images..."
+        _validate_compose_config
+        log_info "Rebuilding all images (module images use per-module Dockerfiles)..."
         $COMPOSE_CMD build
         log_info "Recreating all containers..."
         $COMPOSE_CMD up -d --force-recreate
@@ -742,6 +1150,7 @@ cmd_rebuild() {
     for svc in $COMPOSE_SERVICES; do
         if [ "$target" = "$svc" ]; then
             init_compose
+            _validate_compose_config
             log_info "Rebuilding $target..."
             $COMPOSE_CMD build "$target"
             log_info "Recreating $target container..."
@@ -813,6 +1222,7 @@ cmd_restart_changed() {
         log_warn "Main app code also changed. Restart the main app manually to pick up those changes."
     fi
     init_compose
+    _validate_compose_config
     local to_restart=""
     [ "$speech_changed" -eq 1 ] && to_restart="$to_restart speech"
     [ "$rag_changed" -eq 1 ]   && to_restart="$to_restart rag"
@@ -908,6 +1318,75 @@ except ImportError as e:
     fi
 }
 
+# Doctor: check environment and suggest fixes
+cmd_doctor() {
+    local ok=0
+    log_info "Talkie doctor: checking environment..."
+    echo ""
+    if ! command -v podman &>/dev/null; then
+        echo -e "  ${RED}✗${NC} Podman not found. Install: brew install podman (macOS) or see https://podman.io"
+        ok=1
+    else
+        echo -e "  ${GREEN}✓${NC} Podman: $(podman --version 2>/dev/null || echo present)"
+    fi
+    _set_compose_mode
+    if _is_production_mode; then
+        echo -e "  ${GREEN}✓${NC} Mode: production (compose: compose.production.yaml)"
+        if [ ! -f "${TALKIE_CONFIG:-$SCRIPT_DIR/config.yaml}" ]; then
+            echo -e "  ${RED}✗${NC} config.yaml not found. Copy config.yaml.example to config.yaml or set TALKIE_CONFIG"
+            ok=1
+        else
+            echo -e "  ${GREEN}✓${NC} config.yaml present"
+        fi
+        if [ -z "$(grep -E 'enabled:\s*\[' "${TALKIE_CONFIG:-$SCRIPT_DIR/config.yaml}" 2>/dev/null)" ]; then
+            echo -e "  ${YELLOW}!${NC} modules.enabled not set in config. Add e.g. modules.enabled: [speech, rag, browser]"
+        fi
+    else
+        echo -e "  ${GREEN}✓${NC} Mode: development (compose: compose.yaml)"
+        if [ ! -f "$SCRIPT_DIR/config.yaml" ]; then
+            echo -e "  ${RED}✗${NC} config.yaml not found. Copy config.yaml.example to config.yaml"
+            ok=1
+        else
+            echo -e "  ${GREEN}✓${NC} config.yaml present"
+        fi
+        if [ ! -f "$SCRIPT_DIR/compose.yaml" ]; then
+            echo -e "  ${RED}✗${NC} compose.yaml not found (not in repo root?)"
+            ok=1
+        fi
+        if ! command -v pipenv &>/dev/null; then
+            echo -e "  ${YELLOW}!${NC} pipenv not found. Run: pip3 install --user pipenv"
+        else
+            echo -e "  ${GREEN}✓${NC} pipenv present"
+        fi
+    fi
+    echo ""
+    log_info "Container health (if running):"
+    init_compose 2>/dev/null || true
+    for svc in $COMPOSE_SERVICES; do
+        if podman ps --format "{{.Names}}" 2>/dev/null | grep -q "^${CONTAINER_PREFIX}${svc}$"; then
+            local health
+            health=$(podman inspect --format='{{.State.Health.Status}}' "${CONTAINER_PREFIX}${svc}" 2>/dev/null || echo "none")
+            if [ "$health" = "healthy" ]; then
+                echo -e "  ${GREEN}✓${NC} $svc (healthy)"
+            elif [ "$health" = "unhealthy" ]; then
+                echo -e "  ${RED}✗${NC} $svc (unhealthy). Try: ./talkie restart $svc"
+                ok=1
+            else
+                echo -e "  ${YELLOW}!${NC} $svc (running, no healthcheck)"
+            fi
+        else
+            echo -e "  - $svc (stopped)"
+        fi
+    done
+    echo ""
+    if [ "$ok" -eq 0 ]; then
+        log_info "Doctor: no issues found."
+    else
+        log_warn "Doctor: fix the issues above, then run ./talkie start or ./talkie app"
+        exit 2
+    fi
+}
+
 # Clean up
 cmd_clean() {
     local what="${1:-containers}"
@@ -955,7 +1434,11 @@ usage() {
     cat << EOF
 Talkie Service Management CLI
 
-Usage: ./talkie <command> [options]
+Usage: ./talkie [--dev|--production] <command> [options]
+
+  --dev, -d       Development mode: compose.yaml, build from source, Web UI via pipenv.
+  --production    Production mode: compose.production.yaml, image-only, Web UI in talkie-core container.
+  (Default: dev when run from repo with compose.yaml + modules/; else production.)
 
 Commands:
   start [target]
@@ -973,6 +1456,14 @@ Commands:
   restart [target]
         Restart services (default: all). Same targets as start.
         - restart changed [REF]: Restart/rebuild only services whose code changed (git diff vs REF, default HEAD).
+
+  build [target]
+        Build container images (no start). Uses per-module Dockerfiles for speech, rag, browser, healthbeat.
+        (Production: no build; use ./talkie pull to refresh images.)
+        - build: build all images that have a build section (module images)
+        - build SERVICE: build one service (e.g. speech, rag, browser, healthbeat)
+
+  pull            Pull images (production: from GHCR; dev: base/infra images only).
 
   rebuild {all|changed|SPECIFIC_SERVICE}
         Rebuild images and recreate containers.
@@ -1006,12 +1497,29 @@ Commands:
         - volumes: Remove volumes (deletes data)
         - all: Remove everything
 
+  doctor       Check environment (podman, config, mode, container health) and suggest fixes.
+
   history {clear|list|view <N>|edit <N>}
         Interaction history (numbered, newest first)
         - clear: delete all interactions
         - list: numbered list (like bash history)
         - view N: show full details of item N
         - edit N: open \$EDITOR to edit correction for item N
+
+  module {list|list-available|add|rm|update}
+        Manage modules (git submodules under modules/).
+        - list              List installed modules (id, name, version, description)
+        - list-available    List all marketplace modules with installation state
+        - add <module>      Add a module (shortname or talkie-module-<name>)
+        - rm <module>       Remove a module (shortname; deinit + git rm)
+        - update [module|all]   Init/update submodules (default: all)
+
+  test {unit|e2e|synthetic|all}
+        Run tests by suite.
+        - unit     - unit tests (exclude e2e)
+        - e2e      - end-to-end browser tests
+        - synthetic - synthetic/integration (currently same as unit)
+        - all      - all tests
 
   help    Show this help message
 
@@ -1028,6 +1536,8 @@ Examples:
   ./talkie logs consul-server -f   # Follow Consul logs
   ./talkie download                  # Vosk + Whisper + Ollama (tinyllama, phi, config)
   ./talkie download rifai            # + Scholar PDFs to downloads/
+  ./talkie build                    # Build all module images (per-module Dockerfiles)
+  ./talkie build rag                # Build RAG module image only
   ./talkie restart changed          # Restart/rebuild only containers whose code changed
   ./talkie rebuild all              # Rebuild all images and recreate all containers
   ./talkie rebuild changed          # Rebuild/restart only services with code changes
@@ -1036,6 +1546,13 @@ Examples:
   ./talkie history list             # Numbered interaction history (newest first)
   ./talkie history view 1           # View details of most recent item
   ./talkie history edit 1            # Edit correction for item 1 (\$EDITOR)
+  ./talkie module list              # List installed modules
+  ./talkie module list-available     # List all marketplace modules + state
+  ./talkie module add speech        # Add speech module (submodule)
+  ./talkie module update all        # Init/update all submodules
+  ./talkie test unit                # Unit tests only
+  ./talkie test e2e                 # E2E browser tests
+  ./talkie test all                 # All tests
 
 EOF
 }
@@ -1079,14 +1596,32 @@ main() {
         download)
             cmd_download "$1"
             ;;
+        build)
+            cmd_build "$1"
+            ;;
+        pull)
+            cmd_pull
+            ;;
         rebuild)
             cmd_rebuild "$1" "$2"
             ;;
         clean)
             cmd_clean "${1:-containers}"
             ;;
+        doctor)
+            cmd_doctor
+            ;;
         history)
             cmd_history "$@"
+            ;;
+        module)
+            cmd_module "$@"
+            ;;
+        test)
+            cmd_test "$1"
+            ;;
+        doctor)
+            cmd_doctor
             ;;
         help|--help|-h)
             usage

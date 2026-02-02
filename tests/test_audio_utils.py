@@ -1,4 +1,4 @@
-"""Tests for app.audio_utils: resample_int16 (chunk_rms_level is tested in test_audio_level)."""
+"""Tests for sdk.audio_utils (chunk_rms_level, INT16_MAX, resample_int16). app.audio_utils re-exports for backward compatibility."""
 
 from __future__ import annotations
 

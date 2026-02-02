@@ -148,14 +148,16 @@ class WhisperEngine(STTEngine):
             def _include_segment(s: Any) -> bool:
                 if not (s.text and s.text.strip()):
                     return False
-                if self._no_speech_threshold is not None and getattr(
-                    s, "no_speech_prob", None
-                ) is not None:
+                if (
+                    self._no_speech_threshold is not None
+                    and getattr(s, "no_speech_prob", None) is not None
+                ):
                     if s.no_speech_prob > self._no_speech_threshold:
                         return False
-                if self._min_avg_logprob is not None and getattr(
-                    s, "avg_logprob", None
-                ) is not None:
+                if (
+                    self._min_avg_logprob is not None
+                    and getattr(s, "avg_logprob", None) is not None
+                ):
                     if s.avg_logprob < self._min_avg_logprob:
                         return False
                 return True
@@ -173,7 +175,9 @@ class WhisperEngine(STTEngine):
             logger.warning("Whisper transcribe error: %s", e)
             return ""
 
-    def transcribe_with_confidence(self, audio_bytes: bytes) -> tuple[str, float | None]:
+    def transcribe_with_confidence(
+        self, audio_bytes: bytes
+    ) -> tuple[str, float | None]:
         """
         Transcribe and return (text, confidence 0.0--1.0 or None).
         Confidence is the mean of (1 - no_speech_prob) over included segments.
@@ -206,14 +210,16 @@ class WhisperEngine(STTEngine):
             def _include_segment(s: Any) -> bool:
                 if not (s.text and s.text.strip()):
                     return False
-                if self._no_speech_threshold is not None and getattr(
-                    s, "no_speech_prob", None
-                ) is not None:
+                if (
+                    self._no_speech_threshold is not None
+                    and getattr(s, "no_speech_prob", None) is not None
+                ):
                     if s.no_speech_prob > self._no_speech_threshold:
                         return False
-                if self._min_avg_logprob is not None and getattr(
-                    s, "avg_logprob", None
-                ) is not None:
+                if (
+                    self._min_avg_logprob is not None
+                    and getattr(s, "avg_logprob", None) is not None
+                ):
                     if s.avg_logprob < self._min_avg_logprob:
                         return False
                 return True

@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from sdk.abstractions import TTSEngine
+from sdk import TTSEngine
 
 __all__ = ["TTSEngine"]

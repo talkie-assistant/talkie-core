@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from datetime import datetime
 from typing import Callable
 
-from app.abstractions import (
+from sdk import (
     AudioCapture,
     MicrophoneError,
     NoOpCapture,
@@ -23,8 +23,8 @@ from app.abstractions import (
     SpeakerFilter,
     STTEngine,
     TTSEngine,
+    chunk_rms_level,
 )
-from app.audio_utils import chunk_rms_level
 from app.browse_command import BrowseCommandMatcher
 from llm.client import FALLBACK_MESSAGE, MEMORY_ERROR_MESSAGE, OllamaClient
 from llm.prompts import (
@@ -148,7 +148,9 @@ def create_pipeline(
     browse_cfg = config.get("browser", {}) or {}
     tts_cfg = config.get("tts", {}) or {}
     stt_cfg = config.get("stt", {}) or {}
-    wait_until_done_before_listen = bool(tts_cfg.get("wait_until_done_before_listen", False))
+    wait_until_done_before_listen = bool(
+        tts_cfg.get("wait_until_done_before_listen", False)
+    )
     stt_min_confidence: float | None = None
     try:
         mc = stt_cfg.get("min_confidence")
@@ -206,9 +208,9 @@ class Pipeline:
         llm_prompt_config: dict | None = None,
         auto_sensitivity: dict | None = None,
         browse_cooldown_after_tts_sec: float = 12.0,
-    wait_until_done_before_listen: bool = False,
-    stt_min_confidence: float | None = None,
-    vad_min_level: float | None = None,
+        wait_until_done_before_listen: bool = False,
+        stt_min_confidence: float | None = None,
+        vad_min_level: float | None = None,
     ) -> None:
         self._capture = capture
         self._stt = stt
@@ -522,16 +524,12 @@ class Pipeline:
             self._debug("Audio chunk received (%d bytes), transcribing..." % len(chunk))
             self._on_status("Transcribing...")
             try:
-                if (
-                    self._stt_min_confidence is not None
-                    and hasattr(self._stt, "transcribe_with_confidence")
+                if self._stt_min_confidence is not None and hasattr(
+                    self._stt, "transcribe_with_confidence"
                 ):
                     text, confidence = self._stt.transcribe_with_confidence(chunk)
                     text = (text or "").strip()
-                    if (
-                        confidence is not None
-                        and confidence < self._stt_min_confidence
-                    ):
+                    if confidence is not None and confidence < self._stt_min_confidence:
                         self._debug(
                             "STT confidence %.2f below threshold %.2f; treating as empty"
                             % (confidence, self._stt_min_confidence)
@@ -963,15 +961,16 @@ class Pipeline:
                         self._on_response(spoken_text, interaction_id)
                         prev_spoken_norm = (
                             " ".join(
-                                (self._last_spoken_response or "").strip().lower().split()
+                                (self._last_spoken_response or "")
+                                .strip()
+                                .lower()
+                                .split()
                             )
                             if self._last_spoken_response
                             else ""
                         )
                         self._push_spoken(spoken_text)
-                        if self._should_skip_tts(
-                            spoken_text, False, prev_spoken_norm
-                        ):
+                        if self._should_skip_tts(spoken_text, False, prev_spoken_norm):
                             self._debug(
                                 "Skipping TTS: same as last spoken (avoid repeating)"
                             )
@@ -1284,7 +1283,9 @@ class Pipeline:
                     if is_error_fallback:
                         self._debug("Skipping TTS: error fallback (show in UI only)")
                     else:
-                        self._debug("Skipping TTS: same as last spoken (avoid repeating)")
+                        self._debug(
+                            "Skipping TTS: same as last spoken (avoid repeating)"
+                        )
                 else:
                     try:
                         self._tts.speak(spoken_text)

@@ -360,7 +360,7 @@ def test_parse_regeneration_response_fallback_empty_string() -> None:
 
 
 def test_parse_regeneration_response_fallback_ididnt_catch_output_reply_as() -> None:
-    raw = "I didn't catch that. Output your reply as: \"Test.\""
+    raw = 'I didn\'t catch that. Output your reply as: "Test."'
     sent, cert = parse_regeneration_response(raw)
     assert cert is None
     assert sent == "Test."

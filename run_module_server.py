@@ -45,12 +45,7 @@ def _default_port(module_name: str) -> int:
         from config import load_config
 
         cfg = load_config()
-        port = (
-            cfg.get("modules", {})
-            .get(module_name, {})
-            .get("server", {})
-            .get("port")
-        )
+        port = cfg.get("modules", {}).get(module_name, {}).get("server", {}).get("port")
         if port is not None:
             return int(port)
     except Exception:
@@ -69,7 +64,9 @@ def main() -> None:
     )
     parser.add_argument("--host", default="localhost", help="Host to bind to")
     parser.add_argument(
-        "--port", type=int, help="Port to bind to (default: from config or module default)"
+        "--port",
+        type=int,
+        help="Port to bind to (default: from config or module default)",
     )
     parser.add_argument("--api-key", help="Optional API key for authentication")
     args = parser.parse_args()

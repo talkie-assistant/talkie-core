@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from sdk.abstractions import STTEngine
+from sdk import STTEngine
 
 __all__ = ["STTEngine"]

@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sdk.abstractions import MicrophoneError
+from sdk import MicrophoneError
 
 logger = logging.getLogger(__name__)
 

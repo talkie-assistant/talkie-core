@@ -13,7 +13,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-import run_module_server as rms
+import run_module_server as rms  # noqa: E402
 
 
 def test_discovered_module_names_returns_list() -> None:
@@ -29,7 +29,9 @@ def test_discovered_module_names_includes_builtins_when_modules_present() -> Non
     # At least one of the built-in modules should be present
     builtins = {"speech", "rag", "browser"}
     found = builtins & set(names)
-    assert len(found) >= 1, "Expected at least one of speech, rag, browser to be discovered"
+    assert len(found) >= 1, (
+        "Expected at least one of speech, rag, browser to be discovered"
+    )
 
 
 def test_default_port_returns_int() -> None:
@@ -40,9 +42,18 @@ def test_default_port_returns_int() -> None:
 
 def test_default_port_known_module_returns_expected_range() -> None:
     """Known modules have fallback ports 8001, 8002, 8003."""
-    assert rms._default_port("speech") in (8001, 8002, 8003) or rms._default_port("speech") >= 8000
-    assert rms._default_port("rag") in (8001, 8002, 8003) or rms._default_port("rag") >= 8000
-    assert rms._default_port("browser") in (8001, 8002, 8003) or rms._default_port("browser") >= 8000
+    assert (
+        rms._default_port("speech") in (8001, 8002, 8003)
+        or rms._default_port("speech") >= 8000
+    )
+    assert (
+        rms._default_port("rag") in (8001, 8002, 8003)
+        or rms._default_port("rag") >= 8000
+    )
+    assert (
+        rms._default_port("browser") in (8001, 8002, 8003)
+        or rms._default_port("browser") >= 8000
+    )
 
 
 def test_default_port_unknown_module_returns_fallback() -> None:

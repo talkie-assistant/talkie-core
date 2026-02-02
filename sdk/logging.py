@@ -20,3 +20,6 @@ def get_logger(module_name: str) -> logging.Logger:
     """
     name = (module_name or "").strip() or "module"
     return logging.getLogger(f"talkie.modules.{name}")
+
+
+__all__ = ["get_logger"]

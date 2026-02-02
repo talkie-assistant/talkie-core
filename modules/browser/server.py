@@ -6,15 +6,15 @@ Exposes browser operations via REST API.
 from __future__ import annotations
 
 import argparse
-import logging
 from typing import Any, Callable
 
 from fastapi import Request, status
 
+from sdk import get_browser_section, get_logger
 from modules.api.server import BaseModuleServer
 from modules.browser.service import BrowserService
 
-logger = logging.getLogger(__name__)
+logger = get_logger("browser")
 
 
 class BrowserModuleServer(BaseModuleServer):
@@ -114,8 +114,6 @@ class BrowserModuleServer(BaseModuleServer):
         """Initialize browser service on startup."""
         await super().startup()
         try:
-            from sdk.config import get_browser_section
-
             browser_config = get_browser_section(self._config)
             if not browser_config.get("enabled", False):
                 logger.warning("Browser module disabled in config")
@@ -141,8 +139,6 @@ class BrowserModuleServer(BaseModuleServer):
         self._config.update(config)
         # Recreate service
         try:
-            from sdk.config import get_browser_section
-
             browser_config = get_browser_section(self._config)
             self._service = BrowserService(browser_config)
         except Exception as e:

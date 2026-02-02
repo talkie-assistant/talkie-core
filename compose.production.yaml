@@ -1,0 +1,244 @@
+# Production compose: image-only, no build. All images from GHCR (talkie-assistant).
+# Use with TALKIE_IMAGE_TAG (e.g. latest, main, sha-xxx) to pin versions.
+# CLI starts only infra + services in config modules.enabled; this file defines all optional services.
+name: talkie-core
+
+services:
+  # Talkie Web UI (single container per resolved decision)
+  talkie-core:
+    image: ghcr.io/talkie-assistant/talkie-core:${TALKIE_IMAGE_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME}-talkie-core
+    mem_limit: 1g
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - talkie-core-network
+    depends_on:
+      consul-server:
+        condition: service_healthy
+      keydb:
+        condition: service_healthy
+    environment:
+      - CONSUL_HTTP_ADDR=consul-server:8500
+      - KEYDB_HOST=keydb
+      - KEYDB_PORT=6379
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8765/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: ${COMPOSE_PROJECT_NAME}-chroma
+    mem_limit: 1g
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/data
+    restart: unless-stopped
+    networks:
+      - talkie-core-network
+    depends_on:
+      consul-server:
+        condition: service_started
+
+  consul-server:
+    image: hashicorp/consul:1.22
+    container_name: ${COMPOSE_PROJECT_NAME}-consul-server
+    mem_limit: 256m
+    command:
+      - agent
+      - -server
+      - -node=server-1
+      - -bootstrap-expect=1
+      - -client=0.0.0.0
+      - -config-file=/consul/config/consul.hcl
+      - -ui
+    ports:
+      - "8500:8500"
+    volumes:
+      - consul_data:/consul/data
+      - ./consul/consul.hcl:/consul/config/consul.hcl:ro
+    restart: unless-stopped
+    networks:
+      talkie-core-network:
+        ipv4_address: 172.30.0.2
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  keydb:
+    image: eqalpha/keydb:latest
+    container_name: ${COMPOSE_PROJECT_NAME}-keydb
+    mem_limit: 512m
+    ports:
+      - "6380:6379"
+    volumes:
+      - keydb_data:/data
+    restart: unless-stopped
+    networks:
+      - talkie-core-network
+    depends_on:
+      consul-server:
+        condition: service_started
+    command: ["keydb-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "keydb-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  haproxy:
+    image: haproxy:latest
+    container_name: ${COMPOSE_PROJECT_NAME}-haproxy
+    mem_limit: 128m
+    command: ["haproxy", "-W", "-db", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+    ports:
+      - "8080:8080"
+      - "8443:443"
+      - "8404:8404"
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./haproxy/dynamic:/usr/local/etc/haproxy/dynamic:ro
+    restart: unless-stopped
+    networks:
+      - talkie-core-network
+    depends_on:
+      consul-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  speech:
+    image: ghcr.io/talkie-assistant/talkie-module-speech:${TALKIE_IMAGE_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME}-speech
+    hostname: speech
+    mem_limit: 2g
+    command: ["python", "-m", "modules.speech.server", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - talkie-core-network
+    depends_on:
+      consul-server:
+        condition: service_healthy
+      keydb:
+        condition: service_healthy
+    environment:
+      - CONSUL_HTTP_ADDR=consul-server:8500
+      - KEYDB_HOST=keydb
+      - KEYDB_PORT=6379
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  rag:
+    image: ghcr.io/talkie-assistant/talkie-module-rag:${TALKIE_IMAGE_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME}-rag
+    hostname: rag
+    mem_limit: 1g
+    command: ["python", "-m", "modules.rag.server", "--host", "0.0.0.0", "--port", "8002"]
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - talkie-core-network
+    depends_on:
+      consul-server:
+        condition: service_healthy
+      keydb:
+        condition: service_healthy
+      chroma:
+        condition: service_started
+    environment:
+      - CONSUL_HTTP_ADDR=consul-server:8500
+      - KEYDB_HOST=keydb
+      - KEYDB_PORT=6379
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  browser:
+    image: ghcr.io/talkie-assistant/talkie-module-browser:${TALKIE_IMAGE_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME}-browser
+    hostname: browser
+    mem_limit: 512m
+    command: ["python", "-m", "modules.browser.server", "--host", "0.0.0.0", "--port", "8003"]
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - talkie-core-network
+    depends_on:
+      consul-server:
+        condition: service_healthy
+      keydb:
+        condition: service_healthy
+    environment:
+      - CONSUL_HTTP_ADDR=consul-server:8500
+      - KEYDB_HOST=keydb
+      - KEYDB_PORT=6379
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8003/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  healthbeat:
+    image: ghcr.io/talkie-assistant/talkie-module-healthbeat:${TALKIE_IMAGE_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME}-healthbeat
+    mem_limit: 128m
+    command: ["python", "-m", "modules.api.healthbeat", "--consul-host", "consul-server", "--keydb-host", "keydb", "--interval", "10.0"]
+    restart: unless-stopped
+    networks:
+      - talkie-core-network
+    depends_on:
+      consul-server:
+        condition: service_healthy
+      keydb:
+        condition: service_healthy
+    environment:
+      - CONSUL_HTTP_ADDR=consul-server:8500
+      - KEYDB_HOST=keydb
+      - KEYDB_PORT=6379
+    healthcheck:
+      test: ["CMD-SHELL", "true"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  talkie-core-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  chroma_data:
+  consul_data:
+  keydb_data:

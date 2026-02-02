@@ -61,7 +61,7 @@ def test_whisper_engine_transcribe_filters_no_speech_segments() -> None:
     ]
     engine._model.transcribe.return_value = (iter(segments), None)
 
-    audio = (b"\x00\x00" * 8000)
+    audio = b"\x00\x00" * 8000
     result = engine.transcribe(audio)
     assert "hello" in result
     assert "world" not in result
@@ -99,7 +99,9 @@ def test_whisper_engine_transcribe_with_confidence_returns_tuple() -> None:
     assert abs(confidence - (0.9 + 0.8) / 2) < 0.01
 
 
-def test_whisper_engine_transcribe_with_confidence_no_segments_returns_none_conf() -> None:
+def test_whisper_engine_transcribe_with_confidence_no_segments_returns_none_conf() -> (
+    None
+):
     engine = WhisperEngine(config={"no_speech_threshold": 0.5})
     engine._model = MagicMock()
     segments = [

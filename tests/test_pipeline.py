@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from app.abstractions import (
+from sdk import (
     NoOpCapture,
     NoOpSpeakerFilter,
     NoOpSTTEngine,
@@ -381,7 +381,9 @@ def test_should_skip_tts_different_text_returns_false(pipeline: Pipeline) -> Non
     assert pipeline._should_skip_tts("New response.", False, "old response") is False
 
 
-def test_should_skip_tts_last_spoken_empty_different_returns_false(pipeline: Pipeline) -> None:
+def test_should_skip_tts_last_spoken_empty_different_returns_false(
+    pipeline: Pipeline,
+) -> None:
     assert pipeline._should_skip_tts("Hello", False, "") is False
 
 

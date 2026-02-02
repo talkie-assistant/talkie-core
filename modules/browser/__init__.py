@@ -8,7 +8,7 @@ import logging
 import re
 from typing import Callable
 
-from sdk.config import get_browser_section
+from sdk import get_browser_section
 from modules.browser.base import FetchResult
 from modules.browser.service import BrowserService, DEFAULT_DEMO_SCENARIOS
 

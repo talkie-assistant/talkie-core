@@ -11,6 +11,7 @@ import pytest
 import config
 from config import (
     AppConfig,
+    get_modules_enabled,
     load_config,
     load_yaml_file,
     resolve_internal_service_url,
@@ -137,6 +138,37 @@ def test_load_config_merges_module_configs_first(tmp_path: Path) -> None:
             merged = load_config()
             assert merged.get("audio", {}).get("sample_rate") == 48000
             assert merged.get("audio", {}).get("device_id") == 0
+
+
+def test_load_config_modules_enabled_only_no_module_paths(tmp_path: Path) -> None:
+    """Production: load_config with modules.enabled and no modules/ on disk does not raise."""
+    root = tmp_path / "config.yaml"
+    root.write_text(
+        "modules:\n  enabled: [speech, rag, browser]\n"
+        "persistence:\n  db_path: data/talkie.db\n"
+    )
+    with patch.dict(os.environ, {"TALKIE_CONFIG": str(root)}):
+        with patch.object(config, "_get_module_config_paths", return_value=[]):
+            merged = load_config()
+    assert get_modules_enabled(merged) == ["speech", "rag", "browser"]
+    assert merged.get("persistence", {}).get("db_path") == "data/talkie.db"
+
+
+# ---- get_modules_enabled (production mode) ----
+def test_get_modules_enabled_empty_or_none_returns_empty() -> None:
+    assert get_modules_enabled(None) == []
+    assert get_modules_enabled({}) == []
+
+
+def test_get_modules_enabled_list_returns_ids() -> None:
+    raw = {"modules": {"enabled": ["speech", "rag", "browser"]}}
+    assert get_modules_enabled(raw) == ["speech", "rag", "browser"]
+
+
+def test_get_modules_enabled_not_list_returns_empty() -> None:
+    assert get_modules_enabled({"modules": {"enabled": "speech"}}) == []
+    assert get_modules_enabled({"modules": {}}) == []
+    assert get_modules_enabled({"modules": {"enabled": None}}) == []
 
 
 # ---- AppConfig ----
@@ -291,7 +323,7 @@ def test_resolve_internal_service_url_consul_exception_returns_unchanged() -> No
 
 def test_get_module_config_paths_exception_returns_empty_list() -> None:
     with patch(
-        "sdk.discovery.get_module_config_paths",
+        "sdk.get_module_config_paths",
         side_effect=Exception("discovery failed"),
     ):
         result = config._get_module_config_paths()

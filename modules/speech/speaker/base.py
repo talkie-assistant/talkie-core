@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from sdk.abstractions import SpeakerFilter
+from sdk import SpeakerFilter
 
 __all__ = ["SpeakerFilter"]

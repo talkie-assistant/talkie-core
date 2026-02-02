@@ -8,6 +8,8 @@
 #
 # Run with: ./talkie app  (recommended: starts services then opens UI)
 # Or: ./talkie start  (containers only; then run "pipenv run python run.py" or ./talkie app)
+name: talkie-core
+
 services:
   # Application services
   # Ollama: disabled; use local Ollama (run: ollama serve). Uncomment block below to use Podman Ollama.
@@ -36,7 +38,7 @@ services:
 
   chroma:
     image: chromadb/chroma:latest
-    container_name: talkie-core-chroma
+    container_name: ${COMPOSE_PROJECT_NAME}-chroma
     # Vector DB: 1g enough for typical doc sets; increase if large RAG index
     mem_limit: 1g
     ports:
@@ -54,7 +56,7 @@ services:
   # Infrastructure: Service Discovery
   consul-server:
     image: hashicorp/consul:1.22
-    container_name: talkie-core-consul-server
+    container_name: ${COMPOSE_PROJECT_NAME}-consul-server
     mem_limit: 256m
     # -ui last so it takes effect after config file merge; UI at http://localhost:8500/ui
     command:
@@ -85,7 +87,7 @@ services:
   # Note: Using port 6380 to avoid conflict with existing Redis on 6379
   keydb:
     image: eqalpha/keydb:latest
-    container_name: talkie-core-keydb
+    container_name: ${COMPOSE_PROJECT_NAME}-keydb
     mem_limit: 512m
     ports:
       - "6380:6379"  # External port 6380, internal 6379
@@ -108,7 +110,7 @@ services:
   # Note: Using port 8080 instead of 80 for rootless Podman compatibility
   haproxy:
     image: haproxy:latest
-    container_name: talkie-core-haproxy
+    container_name: ${COMPOSE_PROJECT_NAME}-haproxy
     mem_limit: 128m
     command: ["haproxy", "-W", "-db", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
     # Consul DNS is on 8600; HAProxy backends use resolvers consul (172.30.0.2:8600) in haproxy.cfg
@@ -191,12 +193,12 @@ services:
   #     timeout: 3s
   #     retries: 3
 
-  # Module services (one instance each; register with Consul)
+  # Module services (one instance each; each hosts its own deps in-container)
   speech:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: talkie-core-speech
+      dockerfile: modules/speech/Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME}-speech
     hostname: speech
     # STT (Whisper base/small) + TTS + speaker filter: model in RAM, 2g for Whisper base
     mem_limit: 2g
@@ -228,8 +230,8 @@ services:
   rag:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: talkie-core-rag
+      dockerfile: modules/rag/Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME}-rag
     hostname: rag
     # Chunk + embed (Ollama external) + Chroma client; 1g sufficient
     mem_limit: 1g
@@ -262,8 +264,8 @@ services:
   browser:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: talkie-core-browser
+      dockerfile: modules/browser/Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME}-browser
     hostname: browser
     # Python fetch/parse; no headless Chrome in container; 512m
     mem_limit: 512m
@@ -293,12 +295,12 @@ services:
       timeout: 3s
       retries: 3
 
-  # Healthbeat service: continuous health monitoring
+  # Healthbeat service: continuous health monitoring (API deps only)
   healthbeat:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: talkie-core-healthbeat
+      dockerfile: modules/api/Dockerfile.healthbeat
+    container_name: ${COMPOSE_PROJECT_NAME}-healthbeat
     mem_limit: 128m
     command: ["python", "-m", "modules.api.healthbeat", "--consul-host", "consul-server", "--keydb-host", "keydb", "--interval", "10.0"]
     restart: unless-stopped

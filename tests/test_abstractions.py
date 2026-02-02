@@ -1,8 +1,8 @@
-"""Tests for app.abstractions (sdk.abstractions re-exports): NoOp* implementations, MicrophoneError."""
+"""Tests for SDK abstractions: NoOp* implementations, MicrophoneError."""
 
 from __future__ import annotations
 
-from app.abstractions import (
+from sdk import (
     MicrophoneError,
     NoOpCapture,
     NoOpSpeakerFilter,

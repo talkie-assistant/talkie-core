@@ -1,0 +1,17 @@
+# Speech module: STT (Vosk/Whisper), TTS, speaker filter, calibration
+# Shared server deps
+fastapi>=0.100.0
+uvicorn>=0.22.0
+pyyaml>=6.0
+python-multipart>=0.0.6
+httpx>=0.24.0
+python-consul>=1.1.0
+redis>=4.5.0
+# Speech-specific
+sounddevice>=0.4.6
+numpy>=1.24.0
+vosk>=0.3.45
+faster-whisper>=1.0.0
+resemblyzer>=0.1.1
+torch>=2.0.0
+requests>=2.28.0

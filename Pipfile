@@ -23,11 +23,13 @@ torch = "*"
 pyautogui = {version = "*", markers = "sys_platform == 'darwin'"}
 ddgs = "*"
 markdown = "*"
+certifi = "*"
 
 [dev-packages]
 mypy = "*"
 pytest = "*"
 pytest-cov = "*"
+playwright = "*"
 ruff = "*"
 
 [requires]

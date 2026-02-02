@@ -45,11 +45,27 @@ def _load_yaml(path: Path) -> dict:
 def _get_module_config_paths() -> list[Path]:
     """Discover modules and return ordered config file paths (for merging)."""
     try:
-        from sdk.discovery import get_module_config_paths
+        from sdk import get_module_config_paths
 
         return get_module_config_paths(_MODULES_ROOT)
     except Exception:
         return []
+
+
+def get_modules_enabled(raw_config: dict | None) -> list[str]:
+    """
+    Return list of enabled module ids from config (production mode).
+    Used when modules/ is not on disk; config.modules.enabled is the source of truth.
+    """
+    if not raw_config:
+        return []
+    mod = raw_config.get("modules")
+    if not isinstance(mod, dict):
+        return []
+    enabled = mod.get("enabled")
+    if isinstance(enabled, list):
+        return [str(x) for x in enabled if x]
+    return []
 
 
 def load_config() -> dict:
@@ -139,13 +155,13 @@ class AppConfig:
 
     def get_rag_config(self) -> dict:
         """RAG: embedding model, vector DB path or Chroma server (host/port), top_k, chunk settings."""
-        from sdk.config import get_rag_section
+        from sdk import get_rag_section
 
         return get_rag_section(self._raw)
 
     def get_browser_config(self) -> dict:
         """Browser: enabled, chrome app name, fetch timeout/retries, search URL, cooldown, demo delay."""
-        from sdk.config import get_browser_section
+        from sdk import get_browser_section
 
         return get_browser_section(self._raw)
 

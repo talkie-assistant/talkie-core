@@ -50,6 +50,7 @@ htmlcov/
 .nox/
 coverage.xml
 *.cover
+tests/e2e/artifacts/
 
 # IDE
 .idea/

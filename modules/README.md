@@ -143,6 +143,19 @@ To break modules out into separate projects and include them via git submodules:
 
 ---
 
+## Adding a module to the marketplace
+
+The in-app **Marketplace** (Web UI) lists module repos from the **talkie-assistant** GitHub organization and lets users install them as git submodules with one click. To make your module appear there:
+
+1. Create a repository under the **talkie-assistant** org with name `talkie-module-<shortname>` (e.g. `talkie-module-weather`). The shortname becomes the directory under `modules/` when installed (e.g. `modules/weather`).
+2. The **repo root** must be the module root: same layout as above—`MODULE.yaml`, `config.yaml`, `docs/` (e.g. `docs/README.md`), and optional `__init__.py` with `register(context)`. See the module standard in this README and the wiki [Modules](https://github.com/talkie-core.wiki/Modules) doc.
+3. Do **not** include `modules/api` or `sdk` in the module repo; the main Talkie app provides them when the module is used inside the Talkie tree.
+4. Once the repo is **public**, it appears in the in-app Marketplace; users can click **Install** to add it as a git submodule (requires a git clone of talkie-core).
+
+**Compatibility:** Your module must work with the current talkie-core **SDK** and **modules/api**. Breaking changes in talkie-core may require module updates; follow the module standard and [docs/SDK.md](../docs/SDK.md) for the contract.
+
+---
+
 ## Summary
 
 - **Config**: Module-only keys in `config.yaml`; merged at runtime (module configs → root → user).

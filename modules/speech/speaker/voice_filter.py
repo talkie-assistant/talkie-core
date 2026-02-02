@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sdk.abstractions import SpeakerFilter
+from sdk import SpeakerFilter
 
 from modules.speech.calibration.voice_profile import (
     _get_encoder,

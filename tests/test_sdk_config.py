@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from sdk.config import get_browser_section, get_rag_section
+from sdk import get_browser_section, get_rag_section
 
 
 def test_get_rag_section_empty_returns_defaults() -> None:

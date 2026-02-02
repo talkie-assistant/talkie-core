@@ -1,4 +1,8 @@
-"""Unit tests for rifai_scholar_downloader helpers."""
+"""Unit tests for rifai_scholar_downloader helpers. Not critical; skipped if bs4 is not installed."""
+
+import pytest
+
+pytest.importorskip("bs4")
 
 # Test io_utils
 from rifai_scholar_downloader.io_utils import (

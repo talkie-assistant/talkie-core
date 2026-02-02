@@ -43,12 +43,16 @@ Shared audio helpers used by the pipeline and the speech module:
 - **`sdk.INT16_MAX`**  
   Constant 32767 for int16 sample bounds.
 
+- **`sdk.resample_int16(audio_bytes: bytes, rate_in: int, rate_out: int) -> bytes`**  
+  Resample int16 mono PCM from rate_in to rate_out (e.g. 48k to 16k for web). Uses linear interpolation (numpy); returns bytes of int16 little-endian. Returns empty bytes if numpy is unavailable or rates invalid.
+
 Example:
 
 ```python
-from sdk import chunk_rms_level, INT16_MAX
+from sdk import chunk_rms_level, INT16_MAX, resample_int16
 
 level = chunk_rms_level(audio_chunk)
+resampled = resample_int16(audio_bytes, 48000, 16000)
 ```
 
 ## Abstractions
@@ -72,7 +76,7 @@ from sdk import AudioCapture, STTEngine, TTSEngine, SpeakerFilter
 
 ## Discovery
 
-Module discovery finds subdirectories under a modules root that contain a config file and are not disabled by MODULE.yaml.
+Module discovery finds subdirectories under a modules root that contain a config file and are not disabled by MODULE.yaml. The SDK loads MODULE.yaml itself (no app dependency).
 
 - **`sdk.discover_modules(modules_root: Path) -> list[tuple[str, Path]]`**  
   Returns `(module_name, config_path)` sorted by manifest order then directory name. `modules_root` is required (e.g. `project_root / "modules"`).
@@ -80,18 +84,29 @@ Module discovery finds subdirectories under a modules root that contain a config
 - **`sdk.get_module_config_paths(modules_root: Path) -> list[Path]`**  
   Returns the ordered list of config file paths (used for config merge).
 
-Constants: **`MANIFEST_FILENAME`** (`"MODULE.yaml"`), **`DEFAULT_CONFIG_FILENAME`** (`"config.yaml"`).
+- **`sdk.get_enabled_from_config(config_path: Path) -> list[str]`**  
+  Returns `modules.enabled` from a root config file (production mode when no `modules/` on disk). Returns `[]` if missing or invalid.
+
+- **`sdk.get_modules_info(modules_root: Path) -> list[dict]`**  
+  Returns full manifest-derived info per module: `id`, `name`, `version`, `description`, `order`, `config_path`, `module_dir`, `docs_path`, `help_entry`, `ui_id`. Used by API/UI for module list and help resolution.
+
+- **`sdk.resolve_module_help_path(modules_root: Path, module_id: str) -> Path | None`**  
+  Resolves `module_id` (directory name or `ui_id`) to the path of the help entry file (`docs_path/help_entry`). Returns `None` if not found.
+
+Constants: **`MANIFEST_FILENAME`** (`"MODULE.yaml"`), **`DEFAULT_CONFIG_FILENAME`** (`"config.yaml"`), **`DEFAULT_VERSION`** (`"0.0.0"`), **`DEFAULT_DOCS_PATH`** (`"docs"`), **`DEFAULT_HELP_ENTRY`** (`"README.md"`).
 
 Example:
 
 ```python
 from pathlib import Path
-from sdk import get_module_config_paths, discover_modules
+from sdk import discover_modules, get_module_config_paths, get_modules_info, resolve_module_help_path
 
 root = Path(__file__).resolve().parent / "modules"
 paths = get_module_config_paths(root)
 for name, path in discover_modules(root):
     ...
+infos = get_modules_info(root)
+help_path = resolve_module_help_path(root, "speech")
 ```
 
 ## Logging
@@ -119,6 +134,10 @@ logger.info("RAG ready")
 
 5. **Logging** – Prefer `sdk.get_logger("your_module")` for consistent names.
 
+## Version
+
+- **`sdk.__version__`** – SDK version string (e.g. `"0.1.0"`). Aligns with talkie-core when bundled.
+
 ## API summary
 
 | API | Description |
@@ -128,7 +147,12 @@ logger.info("RAG ready")
 | `get_browser_section(raw_config)` | Normalized browser section. |
 | `discover_modules(modules_root)` | List (name, config_path) for modules under path. |
 | `get_module_config_paths(modules_root)` | Ordered config paths for merge. |
+| `get_enabled_from_config(config_path)` | List of enabled module ids from config (production mode). |
+| `get_modules_info(modules_root)` | List of module info dicts (id, name, version, description, docs_path, help_entry, ui_id, etc.). |
+| `resolve_module_help_path(modules_root, module_id)` | Path to module help entry file, or None. |
 | `get_logger(module_name)` | Logger named talkie.modules.<name>. |
+| `MANIFEST_FILENAME`, `DEFAULT_CONFIG_FILENAME`, `DEFAULT_VERSION`, `DEFAULT_DOCS_PATH`, `DEFAULT_HELP_ENTRY` | Discovery constants. |
 | `AudioCapture`, `STTEngine`, `TTSEngine`, `SpeakerFilter` | Speech interfaces. |
 | `NoOpCapture`, `NoOpSTTEngine`, `NoOpTTSEngine`, `NoOpSpeakerFilter` | No-op implementations. |
 | `MicrophoneError` | Exception for mic failures. |
+| `chunk_rms_level(chunk)`, `INT16_MAX` | Audio level and constant. |

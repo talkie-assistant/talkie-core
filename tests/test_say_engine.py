@@ -49,7 +49,9 @@ def test_say_engine_init_rate_wpm_negative_stored_as_none() -> None:
 
 def test_say_engine_speak_includes_r_flag_when_rate_wpm_set() -> None:
     engine = SayEngine(voice=None, rate_wpm=175)
-    with patch("modules.speech.tts.say_engine.subprocess.Popen", MagicMock()) as mock_popen:
+    with patch(
+        "modules.speech.tts.say_engine.subprocess.Popen", MagicMock()
+    ) as mock_popen:
         mock_popen.return_value.wait.return_value = 0
         engine._speak_sync("Hello")
     call_args = mock_popen.call_args[0][0]
@@ -61,7 +63,9 @@ def test_say_engine_speak_includes_r_flag_when_rate_wpm_set() -> None:
 
 def test_say_engine_speak_no_r_flag_when_rate_wpm_none() -> None:
     engine = SayEngine(voice=None, rate_wpm=None)
-    with patch("modules.speech.tts.say_engine.subprocess.Popen", MagicMock()) as mock_popen:
+    with patch(
+        "modules.speech.tts.say_engine.subprocess.Popen", MagicMock()
+    ) as mock_popen:
         mock_popen.return_value.wait.return_value = 0
         engine._speak_sync("Hello")
     call_args = mock_popen.call_args[0][0]
@@ -70,7 +74,9 @@ def test_say_engine_speak_no_r_flag_when_rate_wpm_none() -> None:
 
 def test_say_engine_speak_no_r_flag_when_rate_wpm_zero() -> None:
     engine = SayEngine(voice=None, rate_wpm=0)
-    with patch("modules.speech.tts.say_engine.subprocess.Popen", MagicMock()) as mock_popen:
+    with patch(
+        "modules.speech.tts.say_engine.subprocess.Popen", MagicMock()
+    ) as mock_popen:
         mock_popen.return_value.wait.return_value = 0
         engine._speak_sync("Hello")
     call_args = mock_popen.call_args[0][0]

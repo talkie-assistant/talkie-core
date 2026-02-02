@@ -4,6 +4,8 @@ A module is a subdirectory that contains config.yaml (or the file named in MODUL
 MODULE.yaml manifest: name, version (required, default 0.0.0), description, enabled,
 order, config_file; optional docs_path, help_entry, ui_id.
 Callers must pass modules_root (e.g. project_root / "modules"); no default to avoid wrong paths.
+
+This module does not import from app or config so the SDK remains dependency-free of the host.
 """
 
 from __future__ import annotations
@@ -11,6 +13,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +25,22 @@ DEFAULT_DOCS_PATH = "docs"
 DEFAULT_HELP_ENTRY = "README.md"
 
 
+def _load_yaml_file(path: Path) -> dict[str, Any]:
+    """Load a YAML file; return {} if missing or invalid. SDK-local loader (no app dependency)."""
+    if not path.exists():
+        return {}
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def _load_manifest(module_dir: Path) -> dict[str, Any]:
     """Load MODULE.yaml from module_dir. Returns {} if missing or invalid."""
-    from config import load_yaml_file
-
     path = module_dir / MANIFEST_FILENAME
-    data = load_yaml_file(path)
+    data = _load_yaml_file(path)
     if not data and path.exists():
         logger.debug("Could not load %s (invalid or empty)", path)
     return data
@@ -176,3 +190,40 @@ def get_module_config_paths(modules_root: Path) -> list[Path]:
         modules_root: Path to the modules directory.
     """
     return [path for _name, path in discover_modules(modules_root)]
+
+
+def get_enabled_from_config(config_path: Path) -> list[str]:
+    """
+    Return list of enabled module ids from a root config file (production mode).
+    Use when modules_root is empty or missing; config.modules.enabled is the source of truth.
+
+    Args:
+        config_path: Path to config.yaml (or root config file).
+
+    Returns:
+        List of module id strings, or [] if missing/invalid.
+    """
+    if not config_path.is_file():
+        return []
+    data = _load_yaml_file(config_path)
+    mod = data.get("modules") if isinstance(data, dict) else None
+    if not isinstance(mod, dict):
+        return []
+    enabled = mod.get("enabled")
+    if isinstance(enabled, list):
+        return [str(x).strip() for x in enabled if x]
+    return []
+
+
+__all__ = [
+    "DEFAULT_CONFIG_FILENAME",
+    "DEFAULT_DOCS_PATH",
+    "DEFAULT_HELP_ENTRY",
+    "DEFAULT_VERSION",
+    "MANIFEST_FILENAME",
+    "discover_modules",
+    "get_enabled_from_config",
+    "get_module_config_paths",
+    "get_modules_info",
+    "resolve_module_help_path",
+]

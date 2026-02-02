@@ -73,14 +73,18 @@ def modules_root(tmp_path: Path) -> Path:
         "name: speech\nversion: '1.0.0'\ndescription: Audio\n"
     )
     (tmp_path / "speech" / "docs").mkdir()
-    (tmp_path / "speech" / "docs" / "README.md").write_text("# Speech module\n\nHelp text.")
+    (tmp_path / "speech" / "docs" / "README.md").write_text(
+        "# Speech module\n\nHelp text."
+    )
     (tmp_path / "rag").mkdir()
     (tmp_path / "rag" / "config.yaml").write_text("rag: {}\n")
     (tmp_path / "rag" / "MODULE.yaml").write_text(
         "name: rag\nversion: '1.0.0'\nui_id: documents\n"
     )
     (tmp_path / "rag" / "docs").mkdir()
-    (tmp_path / "rag" / "docs" / "README.md").write_text("# RAG\n\n| A | B |\n|-|-|\n|1|2|")
+    (tmp_path / "rag" / "docs" / "README.md").write_text(
+        "# RAG\n\n| A | B |\n|-|-|\n|1|2|"
+    )
     return tmp_path
 
 
@@ -137,7 +141,9 @@ def test_api_modules_help_404_missing_docs(modules_root: Path) -> None:
     """Module with no docs/README.md returns 404."""
     (modules_root / "nodocs").mkdir()
     (modules_root / "nodocs" / "config.yaml").write_text("x: 1\n")
-    (modules_root / "nodocs" / "MODULE.yaml").write_text("name: nodocs\nversion: '1.0'\n")
+    (modules_root / "nodocs" / "MODULE.yaml").write_text(
+        "name: nodocs\nversion: '1.0'\n"
+    )
     app = _make_modules_app(modules_root)
     client = TestClient(app)
     resp = client.get("/api/modules/nodocs/help")

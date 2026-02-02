@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 from collections import deque
 
-from app.abstractions import AudioCapture
+from sdk import AudioCapture
 from app.audio_utils import resample_int16
 
 TARGET_SAMPLE_RATE = 16000

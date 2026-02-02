@@ -25,10 +25,10 @@ This guide walks through **Section 7** of the self-contained modules refactor: m
 
 - Main Talkie repo at a known path (e.g. `~/git/talkie`).
 - GitHub org (or user) and three **empty** public repos created:
-  - `https://github.com/<org-or-user>/talkie-module-speech`
-  - `https://github.com/<org-or-user>/talkie-module-rag`
-  - `https://github.com/<org-or-user>/talkie-module-browser`
-- Git and shell. Replace `<ORG>` (or your username) in URLs below.
+  - `https://github.com/talkie-assistant/talkie-module-speech`
+  - `https://github.com/talkie-assistant/talkie-module-rag`
+  - `https://github.com/talkie-assistant/talkie-module-browser`
+- Git and shell. URLs below use the **talkie-assistant** org.
 
 ---
 
@@ -49,7 +49,7 @@ git init
 git add .
 git commit -m "Initial commit: speech module from Talkie"
 git branch -M main
-git remote add origin https://github.com/<ORG>/talkie-module-speech.git
+git remote add origin https://github.com/talkie-assistant/talkie-module-speech.git
 git push -u origin main
 ```
 
@@ -64,7 +64,7 @@ git init
 git add .
 git commit -m "Initial commit: RAG module from Talkie"
 git branch -M main
-git remote add origin https://github.com/<ORG>/talkie-module-rag.git
+git remote add origin https://github.com/talkie-assistant/talkie-module-rag.git
 git push -u origin main
 ```
 
@@ -79,7 +79,7 @@ git init
 git add .
 git commit -m "Initial commit: browser module from Talkie"
 git branch -M main
-git remote add origin https://github.com/<ORG>/talkie-module-browser.git
+git remote add origin https://github.com/talkie-assistant/talkie-module-browser.git
 git push -u origin main
 ```
 
@@ -98,16 +98,25 @@ cd "$TALKIE_ROOT"
 git rm -rf modules/speech modules/rag modules/browser
 
 # Add each module as a submodule (use your org or username in the URL)
-git submodule add https://github.com/<ORG>/talkie-module-speech.git modules/speech
-git submodule add https://github.com/<ORG>/talkie-module-rag.git modules/rag
-git submodule add https://github.com/<ORG>/talkie-module-browser.git modules/browser
+git submodule add https://github.com/talkie-assistant/talkie-module-speech.git modules/speech
+git submodule add https://github.com/talkie-assistant/talkie-module-rag.git modules/rag
+git submodule add https://github.com/talkie-assistant/talkie-module-browser.git modules/browser
 
 # Commit the change and .gitmodules
 git add .gitmodules modules/speech modules/rag modules/browser
 git commit -m "Convert speech, rag, browser modules to git submodules"
 ```
 
-This creates `.gitmodules` and records the current commit of each submodule. Push when ready:
+This creates `.gitmodules` and records the current commit of each submodule.
+
+**Phase A verification:** After adding submodules, run once:
+
+```bash
+git submodule update --init --recursive
+pipenv run python -m pytest tests/test_module_discovery.py tests/test_api_modules.py -v
+```
+
+Confirm discovery still sees speech, rag, and browser. Then push when ready:
 
 ```bash
 git push
@@ -121,11 +130,11 @@ After the migration, anyone cloning the main repo must fetch the module submodul
 
 ```bash
 # Option A: clone with submodules in one step
-git clone --recurse-submodules https://github.com/<ORG>/talkie.git
+git clone --recurse-submodules https://github.com/talkie-assistant/talkie-core.git
 cd talkie
 
 # Option B: clone then init submodules
-git clone https://github.com/<ORG>/talkie.git
+git clone https://github.com/talkie-assistant/talkie-core.git
 cd talkie
 git submodule update --init --recursive
 ```

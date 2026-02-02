@@ -476,7 +476,7 @@
             <tr><th><kbd>H</kbd> or <kbd>h</kbd></th><td>Show this help (in browse mode: browse commands)</td></tr>
             <tr><th><kbd>Esc</kbd></th><td>Close help (when open)</td></tr>
             <tr><th>Tab</th><td>Move focus (skip link, nav, main content)</td></tr>
-            <tr><th>Nav buttons</th><td><kbd>Enter</kbd> or <kbd>Space</kbd> to switch section (Main, History, Personalization, Documents, Training, Calibration)</td></tr>
+            <tr><th>Nav buttons</th><td><kbd>Enter</kbd> or <kbd>Space</kbd> to switch section (Main, History, Personalization, Documents, Training, Calibration, Marketplace)</td></tr>
             <tr><th>History rows</th><td>Click or <kbd>Enter</kbd>/<kbd>Space</kbd> to select row for correction</td></tr>
             <tr><th>Status bar</th><td>Refresh icon: reconnect WebSocket when disconnected</td></tr>
             <tr><th>Modules</th><td>Speech, Web, RAG: enable after connecting to server</td></tr>
@@ -535,6 +535,7 @@
     <button type="button" data-tab="documents" aria-current="false">Documents</button>
     <button type="button" data-tab="training" aria-current="false">Training</button>
     <button type="button" data-tab="calibration" aria-current="false">Calibration</button>
+    <button type="button" data-tab="marketplace" aria-current="false">Marketplace</button>
   </nav>
 
   <main id="panel-main" class="panel active" aria-label="Main" tabindex="-1">
@@ -620,6 +621,18 @@
       <div class="form-row"><label>Min transcription length</label><input type="number" id="calibrationMinLen" min="0" max="20" value="3"></div>
       <button type="button" id="calibrationSave">Save (restart app to apply)</button>
     </section>
+  </div>
+
+  <div id="panel-marketplace" class="panel">
+    <h2 style="font-size:1.25rem;margin:0 0 0.5rem;">Module marketplace</h2>
+    <p class="status-hint">Modules from the talkie-assistant org; free. Install adds a git submodule. Restart the app after installing to load the module.</p>
+    <p id="marketplaceGitHint" class="status-hint" style="display:none;">Install only works in a git clone of talkie-core.</p>
+    <p id="marketplaceError" class="status-hint error" style="display:none;"></p>
+    <button type="button" id="marketplaceRefresh">Refresh</button>
+    <table id="marketplaceTable" aria-label="Available modules">
+      <thead><tr><th>id</th><th>description</th><th>state</th></tr></thead>
+      <tbody id="marketplaceList"></tbody>
+    </table>
   </div>
 
   <div id="toastContainer" aria-live="polite"></div>
@@ -1108,6 +1121,7 @@
         if (tabName === 'documents') loadDocuments();
         if (tabName === 'training') loadTraining();
         if (tabName === 'calibration') loadCalibration();
+        if (tabName === 'marketplace') loadMarketplace();
       }
       document.querySelectorAll('nav [data-tab]').forEach(function (btn) {
         btn.addEventListener('click', function () { switchTab(btn.getAttribute('data-tab')); });
@@ -1293,6 +1307,82 @@
           const src = ev.target.dataset.source;
           api('/api/documents/' + encodeURIComponent(src), { method: 'DELETE' }).then(function () { loadDocuments(); showSaveNotification('Document removed'); }).catch(function () {});
         }
+      });
+
+      var marketplaceGitAvailable = true;
+      function loadMarketplace() {
+        const errEl = document.getElementById('marketplaceError');
+        const gitHint = document.getElementById('marketplaceGitHint');
+        const listEl = document.getElementById('marketplaceList');
+        if (!listEl) return;
+        errEl.style.display = 'none';
+        errEl.textContent = '';
+        listEl.innerHTML = '<tr><td colspan="3" class="status-hint">Loading...</td></tr>';
+        Promise.all([
+          api('/api/marketplace/git-available').catch(function () { return { git_available: false }; }),
+          api('/api/marketplace/modules').catch(function () { return { modules: [], error: 'Could not load marketplace' }; })
+        ]).then(function (results) {
+          marketplaceGitAvailable = (results[0] && results[0].git_available) !== false;
+          if (gitHint) gitHint.style.display = marketplaceGitAvailable ? 'none' : 'block';
+          const data = results[1] || {};
+          const modules = data.modules || [];
+          const listError = data.error;
+          if (listError) {
+            errEl.textContent = listError + ' Retry with Refresh.';
+            errEl.style.display = 'block';
+          }
+          listEl.innerHTML = '';
+          if (modules.length === 0 && !listError) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td colspan="3" class="status-hint">No talkie-module-* repos found in the org.</td>';
+            listEl.appendChild(tr);
+            return;
+          }
+          modules.forEach(function (m) {
+            const tr = document.createElement('tr');
+            const idCell = document.createElement('td');
+            idCell.textContent = m.shortname || m.repo_name || '';
+            tr.appendChild(idCell);
+            const descCell = document.createElement('td');
+            descCell.textContent = m.description || '';
+            descCell.style.color = 'var(--muted)';
+            tr.appendChild(descCell);
+            const stateCell = document.createElement('td');
+            if (!!m.installed) {
+              stateCell.textContent = 'Installed';
+              stateCell.setAttribute('aria-label', 'Installed');
+            } else {
+              const btn = document.createElement('button');
+              btn.type = 'button';
+              btn.textContent = 'Install';
+              btn.dataset.repo = m.repo_name || '';
+              btn.disabled = !marketplaceGitAvailable;
+              btn.className = 'marketplace-install';
+              stateCell.appendChild(btn);
+            }
+            tr.appendChild(stateCell);
+            listEl.appendChild(tr);
+          });
+        }).catch(function () {
+          errEl.textContent = 'Could not load marketplace.';
+          errEl.style.display = 'block';
+          listEl.innerHTML = '';
+        });
+      }
+      document.getElementById('marketplaceRefresh').addEventListener('click', loadMarketplace);
+      document.getElementById('marketplaceList').addEventListener('click', function (ev) {
+        if (!ev.target.classList.contains('marketplace-install') || !ev.target.dataset.repo) return;
+        const repo = ev.target.dataset.repo;
+        const btn = ev.target;
+        btn.disabled = true;
+        api('/api/marketplace/install', { method: 'POST', body: JSON.stringify({ repo_name: repo }) }).then(function (r) {
+          loadMarketplace();
+          showSaveNotification(r.message || 'Module installed.');
+        }).catch(function (err) {
+          btn.disabled = false;
+          const msg = (err && err.body && typeof err.body === 'object' && err.body.error) ? err.body.error : (err && err.message) ? err.message : 'Install failed';
+          showSaveNotification(msg);
+        });
       });
 
       function loadTraining() {

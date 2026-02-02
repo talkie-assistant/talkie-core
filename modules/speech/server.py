@@ -7,15 +7,15 @@ from __future__ import annotations
 
 import argparse
 import base64
-import logging
 from typing import Any
 
 from fastapi import Request, status
 
+from sdk import get_logger
 from modules.api.server import BaseModuleServer
 from modules.speech import SpeechFactory, SpeechComponents
 
-logger = logging.getLogger(__name__)
+logger = get_logger("speech")
 
 
 class SpeechModuleServer(BaseModuleServer):
@@ -83,7 +83,7 @@ class SpeechModuleServer(BaseModuleServer):
                 if chunk is None:
                     return {"audio_base64": "", "level": 0.0}
                 # Calculate level
-                from sdk.audio_utils import chunk_rms_level
+                from sdk import chunk_rms_level
 
                 level = chunk_rms_level(chunk)
                 audio_base64 = base64.b64encode(chunk).decode("utf-8")

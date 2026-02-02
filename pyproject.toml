@@ -9,6 +9,7 @@ requires-python = ">=3.11"
 testpaths = ["tests"]
 addopts = "-v"
 filterwarnings = ["ignore::DeprecationWarning", "ignore::PendingDeprecationWarning"]
+markers = ["e2e: end-to-end browser tests (run with pytest -m e2e or pytest tests/e2e/)"]
 
 [tool.coverage.run]
 source = ["app", "config", "llm", "persistence", "profile", "curation", "modules", "sdk"]

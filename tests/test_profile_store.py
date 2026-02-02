@@ -114,11 +114,13 @@ def test_get_context_for_llm_includes_preferred_name_and_pronouns(
     history_repo: HistoryRepo,
     settings_repo: SettingsRepo,
 ) -> None:
-    settings_repo.set_many([
-        ("user_context", "Professor."),
-        ("preferred_name", "Lou"),
-        ("pronouns", "she/her"),
-    ])
+    settings_repo.set_many(
+        [
+            ("user_context", "Professor."),
+            ("preferred_name", "Lou"),
+            ("pronouns", "she/her"),
+        ]
+    )
     p = LanguageProfile(history_repo, settings_repo=settings_repo)
     ctx = p.get_context_for_llm()
     assert isinstance(ctx, str)

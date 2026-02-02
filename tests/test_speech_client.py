@@ -61,7 +61,9 @@ def test_remote_stt_transcribe_with_confidence_clamps_below_zero() -> None:
     assert conf == 0.0
 
 
-def test_remote_stt_transcribe_with_confidence_invalid_confidence_returns_none() -> None:
+def test_remote_stt_transcribe_with_confidence_invalid_confidence_returns_none() -> (
+    None
+):
     client = MagicMock()
     client._encode_audio.return_value = "base64abc"
     client._request.return_value = {"text": "hi", "confidence": "high"}

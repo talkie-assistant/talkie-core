@@ -5,10 +5,11 @@ All construction goes through SpeechFactory; public API: create_speech_component
 
 from __future__ import annotations
 
-import logging
 from typing import Any, NamedTuple
 
-logger = logging.getLogger(__name__)
+from sdk import get_logger
+
+logger = get_logger("speech")
 
 
 # --- Calibration overlay (shared logic; used by factory and public API) ---
@@ -85,7 +86,7 @@ class SpeechComponents(NamedTuple):
 class SpeechFactory:
     """
     Builds all speech components from config and optional settings.
-    Single responsibility: construction; uses app.abstractions interfaces.
+    Single responsibility: construction; uses sdk.abstractions interfaces.
     """
 
     def __init__(self, config: dict, settings_repo: Any = None) -> None:
@@ -169,9 +170,7 @@ class SpeechFactory:
                     rate_wpm = get_rate_wpm(self._settings_repo.get("tts_rate"))
                 except Exception:
                     pass
-            return SayEngine(
-                voice=voice, speak_timeout_sec=timeout, rate_wpm=rate_wpm
-            )
+            return SayEngine(voice=voice, speak_timeout_sec=timeout, rate_wpm=rate_wpm)
         return NoOpTTSEngine()
 
     def create_speaker_filter(self) -> Any:
