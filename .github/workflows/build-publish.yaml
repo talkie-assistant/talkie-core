@@ -1,5 +1,5 @@
-# Build and push talkie-core + module images to GHCR on push/merge to main.
-# Images: ghcr.io/talkie-assistant/talkie-core, talkie-module-speech, talkie-module-rag, talkie-module-browser, talkie-module-healthbeat
+# Build and push talkie-core (Web UI) + talkie-module-healthbeat to GHCR on push/merge to main.
+# Module images speech, rag, browser are built by their own repos (talkie-module-*).
 name: Build and publish containers
 
 on:
@@ -18,7 +18,7 @@ jobs:
   build-push:
     name: Build and push images
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -51,45 +51,6 @@ jobs:
             ${{ env.CORE_IMAGE }}:${{ github.ref_name }}
             ${{ env.CORE_IMAGE }}:sha-${{ steps.meta.outputs.sha_short }}
             ${{ env.CORE_IMAGE }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push talkie-module-speech
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./modules/speech/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/talkie-assistant/talkie-module-speech:${{ github.ref_name }}
-            ghcr.io/talkie-assistant/talkie-module-speech:sha-${{ steps.meta.outputs.sha_short }}
-            ghcr.io/talkie-assistant/talkie-module-speech:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push talkie-module-rag
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./modules/rag/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/talkie-assistant/talkie-module-rag:${{ github.ref_name }}
-            ghcr.io/talkie-assistant/talkie-module-rag:sha-${{ steps.meta.outputs.sha_short }}
-            ghcr.io/talkie-assistant/talkie-module-rag:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push talkie-module-browser
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./modules/browser/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/talkie-assistant/talkie-module-browser:${{ github.ref_name }}
-            ghcr.io/talkie-assistant/talkie-module-browser:sha-${{ steps.meta.outputs.sha_short }}
-            ghcr.io/talkie-assistant/talkie-module-browser:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
