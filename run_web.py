@@ -208,7 +208,8 @@ def create_app(
 ):
     """Build the FastAPI app (for running or testing). root defaults to project root."""
     app_root = root or _ROOT
-    web_dir = app_root / "web"
+    # Static files always from script directory so index.html is found regardless of cwd/root
+    web_dir = _ROOT / "web"
 
     deps = _create_pipeline_and_app(config, db_path, web_capture, connections_ref)
     pipeline = deps["pipeline"]

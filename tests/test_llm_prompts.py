@@ -309,6 +309,15 @@ def test_parse_regeneration_response_sentence_strips_certainty_phrase() -> None:
     assert "certainty" not in sent or sent == "I want water."
 
 
+def test_parse_regeneration_response_sentence_strips_meta_commentary() -> None:
+    raw = '{"sentence": "Yes, I can complete this phrase into a single sentence that the user meant to say: \\"Ready, want water?\\"", "certainty": 90}'
+    sent, cert = parse_regeneration_response(raw)
+    assert cert == 90
+    assert sent == "Ready, want water?"
+    assert "Yes, I can complete" not in sent
+    assert "that the user meant to say" not in sent
+
+
 # ---- parse_regeneration_response fallback (_fallback_sentence_from_raw) ----
 def test_parse_regeneration_response_fallback_sentence_colon() -> None:
     raw = "Sentence: I want water."

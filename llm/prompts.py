@@ -385,6 +385,7 @@ def parse_regeneration_response(raw: str) -> tuple[str, int | None]:
         if sentence is None:
             return (_fallback_sentence_from_raw(raw), None)
         sentence = strip_certainty_from_response(str(sentence).strip() or raw.strip())
+        sentence = _strip_meta_commentary_from_sentence(sentence)
         certainty = data.get("certainty")
         if certainty is None:
             return (sentence, None)
@@ -403,6 +404,24 @@ _OUTPUT_REPLY_AS_PATTERN = re.compile(
     r"\s*Output your reply as:\s*[\"']([^\"']+)[\"']\s*\.?\s*$",
     re.IGNORECASE | re.DOTALL,
 )
+
+# Model sometimes returns meta-commentary like "Yes, I can complete this phrase into a single sentence that the user meant to say: \"Ready, want water?\"".
+# Extract only the quoted sentence so we display/speak one sentence.
+_META_MEANT_TO_SAY_PATTERN = re.compile(
+    r"(?:that the user meant to say|into a single sentence[^:]*):\s*[\"']([^\"']+)[\"']\s*\.?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_meta_commentary_from_sentence(text: str) -> str:
+    """If the sentence is meta-commentary (e.g. 'Yes, I can complete... that the user meant to say: \"X\"'), return only X."""
+    if not text or not text.strip():
+        return text
+    t = text.strip()
+    m = _META_MEANT_TO_SAY_PATTERN.search(t)
+    if m:
+        return m.group(1).strip()
+    return t
 
 
 def _fallback_sentence_from_raw(raw: str) -> str:
@@ -425,4 +444,4 @@ def _fallback_sentence_from_raw(raw: str) -> str:
         ).strip()
         if "never use" in rest.lower() or "output your reply as" in rest.lower():
             return "I didn't catch that."
-    return text
+    return _strip_meta_commentary_from_sentence(text)

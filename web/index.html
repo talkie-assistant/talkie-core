@@ -548,6 +548,7 @@
     <div id="status">Stopped</div>
     <div id="statusHint" class="status-hint" style="display:none;">WebSocket failed. Start the server: <code>./talkie start web</code> then open <a href="http://127.0.0.1:8765">http://127.0.0.1:8765</a> (or <a href="http://localhost:8765">http://localhost:8765</a>).</div>
     <div id="response" aria-live="polite"></div>
+    <button type="button" id="btnSpeakResponse" title="Speak the response above (use if automatic speech does not play)">Speak</button>
     <div id="volumeBar"><div id="volumeBarFill"></div></div>
     <div class="log-section">
       <div class="log-actions">
@@ -671,6 +672,11 @@
       const elResponse = document.getElementById('response');
       const elVolume = document.getElementById('volumeBarFill');
       const elDebug = document.getElementById('debug');
+      function speechLog(msg) {
+        var line = '[Speech] ' + msg + '\n';
+        if (elDebug) { elDebug.appendChild(document.createTextNode(line)); elDebug.scrollTop = elDebug.scrollHeight; }
+        console.log('[Talkie Speech]', msg);
+      }
       const MAX_RECONNECT_ATTEMPTS = 10;
       const STATUSBAR_LOG_MAX = 72;
       const MODULES = ['speech', 'web', 'rag'];
@@ -750,6 +756,120 @@
         });
       }
 
+      function ttsRateToUtteranceRate(s) {
+        if (!s || !String(s).trim()) return 1;
+        var t = String(s).trim().toLowerCase();
+        if (t === 'slow') return 0.83;
+        if (t === 'normal') return 1;
+        if (t === 'fast') return 1.26;
+        return 1;
+      }
+      function getTtsRateForSpeak() {
+        return window.__ttsRate || (document.getElementById('settingsTtsRate') && document.getElementById('settingsTtsRate').value) || '';
+      }
+      function stripCertaintyFromResponse(text) {
+        if (!text || !String(text).trim()) return text || '';
+        var out = String(text).trim();
+        out = out.replace(/\s*[.,;:]?\s*\(?\s*certainty\s*[:\s]?\s*\d+\s*%?\s*\)?\s*$/gi, '').trim();
+        out = out.replace(/\s*[.,;:]?\s*\(?\s*\d+\s*%\s*certainty\s*\)?\s*$/gi, '').trim();
+        return out || String(text).trim();
+      }
+      function getDefaultVoice() {
+        if (window.ttsVoice) return window.ttsVoice;
+        var voices = window.speechSynthesis.getVoices();
+        if (!voices || !voices.length) return null;
+        var en = voices.filter(function (v) { return (v.lang || '').toLowerCase().startsWith('en'); });
+        return (en && en[0]) || voices[0];
+      }
+      function unlockSpeechForResponse() {
+        speechLog('unlockSpeechForResponse()');
+        if (typeof window.speechSynthesis === 'undefined') {
+          speechLog('unlock: speechSynthesis undefined');
+          return;
+        }
+        try {
+          window.speechSynthesis.resume();
+          speechLog('unlock: resume() called');
+          if (!window.__speechUnlocked) {
+            speechLog('unlock: first time, speaking "Ready."');
+            window.__speechUnlocked = true;
+            var u = new SpeechSynthesisUtterance('Ready.');
+            u.volume = 1;
+            u.lang = 'en-US';
+            u.onstart = function () { speechLog('unlock: utterance onstart'); };
+            u.onend = function () { speechLog('unlock: utterance onend'); };
+            u.onerror = function (e) { speechLog('unlock: utterance onerror ' + (e.error || 'unknown')); };
+            window.speechSynthesis.speak(u);
+            speechLog('unlock: speak(Ready.) called, pending=' + window.speechSynthesis.pending + ' speaking=' + window.speechSynthesis.speaking);
+          } else {
+            speechLog('unlock: already unlocked');
+          }
+        } catch (e) {
+          speechLog('unlock: exception ' + (e.message || e));
+        }
+      }
+      function speakText(text, debugSource, options) {
+        options = options || {};
+        var skipCancel = options.skipCancel === true;
+        var src = debugSource || 'unknown';
+        speechLog('speakText(source=' + src + ' skipCancel=' + skipCancel + ') text length=' + (text ? String(text).length : 0));
+        if (typeof window.speechSynthesis === 'undefined') {
+          speechLog('speakText: speechSynthesis undefined');
+          return;
+        }
+        if (!text || !String(text).trim()) {
+          speechLog('speakText: no text');
+          return;
+        }
+        var toSpeak = stripCertaintyFromResponse(String(text).trim());
+        speechLog('speakText: after stripCertainty length=' + toSpeak.length + ' first50=' + JSON.stringify(toSpeak.slice(0, 50)));
+        if (!toSpeak) {
+          speechLog('speakText: toSpeak empty after strip');
+          return;
+        }
+        if (/\s+2\.\s+/.test(toSpeak) || /^\s*1\.\s+.+\s+2\.\s+/.test(toSpeak)) {
+          var instructionMatch = toSpeak.match(/Say\s+'open\s+(\d+)'\s+through\s+'open\s+(\d+)'\s+to\s+open\s+a\s+result/);
+          toSpeak = instructionMatch
+            ? ("Say 'open 1' through 'open " + instructionMatch[2] + "' to open a result.")
+            : "Say open and a number to open a result.";
+          speechLog('speakText: shortened to instruction, toSpeak=' + JSON.stringify(toSpeak));
+        }
+        try {
+          window.speechSynthesis.resume();
+          speechLog('speakText: resume() ok');
+        } catch (e) {
+          speechLog('speakText: resume() exception ' + (e.message || e));
+        }
+        if (!skipCancel) {
+          window.speechSynthesis.cancel();
+          speechLog('speakText: cancel() done, pending=' + window.speechSynthesis.pending + ' speaking=' + window.speechSynthesis.speaking + ' paused=' + window.speechSynthesis.paused);
+        } else {
+          speechLog('speakText: skipCancel=true, not calling cancel()');
+        }
+        var u = new SpeechSynthesisUtterance(toSpeak);
+        u.lang = 'en-US';
+        u.volume = 1;
+        if (window.ttsVoice) { u.voice = window.ttsVoice; speechLog('speakText: voice=' + (window.ttsVoice.name || 'unknown')); } else { speechLog('speakText: no voice set, using browser default'); }
+        u.rate = ttsRateToUtteranceRate(getTtsRateForSpeak());
+        speechLog('speakText: rate=' + u.rate);
+        u.onstart = function () { speechLog('speakText: utterance onstart'); };
+        u.onend = function () { speechLog('speakText: utterance onend'); };
+        u.onerror = function (e) { speechLog('speakText: utterance onerror ' + (e.error || 'unknown')); };
+        u.onboundary = function (e) { speechLog('speakText: boundary ' + (e.name || '') + ' charIndex=' + e.charIndex); };
+        window.speechSynthesis.speak(u);
+        speechLog('speakText: speak() called, pending=' + window.speechSynthesis.pending + ' speaking=' + window.speechSynthesis.speaking + ' paused=' + window.speechSynthesis.paused);
+      }
+      function speakResponseText(displayText, debugSource) {
+        var src = debugSource || 'ws';
+        speechLog('speakResponseText(source=' + src + ') displayText length=' + (displayText ? String(displayText).length : 0));
+        if (!displayText || !String(displayText).trim()) {
+          speechLog('speakResponseText: no displayText');
+          return;
+        }
+        var skipCancel = (src === 'ws');
+        speakText(displayText, src, skipCancel ? { skipCancel: true } : undefined);
+      }
+
       function connect() {
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         elStatusHint.style.display = 'none';
@@ -760,6 +880,7 @@
         ws = new WebSocket(WS_URL);
         ws.onopen = function () {
           setConnected();
+          api('/api/settings').then(function (data) { window.__ttsRate = data.tts_rate || ''; }).catch(function () {});
         };
         ws.onerror = function (e) {
           console.warn('WebSocket error', e);
@@ -801,21 +922,11 @@
               if (msg.hasOwnProperty('web_mode')) window.__webMode = !!msg.web_mode;
             }
             else if (msg.type === 'response') {
-              elResponse.textContent = msg.text || '';
+              var displayText = msg.text || '';
+              speechLog('WS message type=response text length=' + (displayText ? displayText.length : 0));
+              elResponse.textContent = displayText;
               elResponse.classList.remove('error');
-              if (msg.text && typeof window.speechSynthesis !== 'undefined') {
-                var toSpeak = msg.text;
-                if (/\s+2\.\s+/.test(toSpeak) || /^\s*1\.\s+.+\s+2\.\s+/.test(toSpeak)) {
-                  var instructionMatch = toSpeak.match(/Say\s+'open\s+(\d+)'\s+through\s+'open\s+(\d+)'\s+to\s+open\s+a\s+result/);
-                  toSpeak = instructionMatch
-                    ? ("Say 'open 1' through 'open " + instructionMatch[2] + "' to open a result.")
-                    : "Say open and a number to open a result.";
-                }
-                window.speechSynthesis.cancel();
-                const u = new SpeechSynthesisUtterance(toSpeak);
-                if (window.ttsVoice) u.voice = window.ttsVoice;
-                window.speechSynthesis.speak(u);
-              }
+              if (displayText) speakResponseText(displayText, 'ws');
             } else if (msg.type === 'open_url' && msg.url) {
               window.open(msg.url, '_blank', 'noopener,noreferrer');
             } else if (msg.type === 'error') { elResponse.textContent = msg.message || ''; elResponse.classList.add('error'); }
@@ -844,8 +955,12 @@
         };
       }
 
+      var startCaptureTime = 0;
+      var START_DEBOUNCE_MS = 35000;
       function sendStart(sampleRate, module) {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        startCaptureTime = Date.now();
+        setMainStatus('Starting speech recognition… (may take 30s)');
         ws.send(JSON.stringify({ action: 'start', sample_rate: sampleRate || TARGET_SAMPLE_RATE, module: module || 'speech' }));
       }
 
@@ -954,7 +1069,13 @@
             setMainStatus('Connect to server first (use refresh in status bar).');
             return;
           }
+          unlockSpeechForResponse();
           if (activeModule === m) {
+            var elapsed = Date.now() - startCaptureTime;
+            if (elapsed < START_DEBOUNCE_MS) {
+              setMainStatus('Wait for "Listening…" (startup can take 30s). Click again to stop.');
+              return;
+            }
             stopCapture();
             return;
           }
@@ -981,6 +1102,39 @@
         setLastLog('');
         showSaveNotification('Log cleared');
       });
+      var btnSpeakResponse = document.getElementById('btnSpeakResponse');
+      if (btnSpeakResponse) btnSpeakResponse.addEventListener('click', function () {
+        speechLog('--- Speak button clicked (max debug) ---');
+        speechLog('speechSynthesis present=' + (typeof window.speechSynthesis !== 'undefined'));
+        if (typeof window.speechSynthesis !== 'undefined') {
+          speechLog('pending=' + window.speechSynthesis.pending + ' speaking=' + window.speechSynthesis.speaking + ' paused=' + window.speechSynthesis.paused);
+          var voices = window.speechSynthesis.getVoices();
+          speechLog('getVoices().length=' + (voices ? voices.length : 0));
+          if (window.ttsVoice) speechLog('ttsVoice=' + window.ttsVoice.name); else speechLog('ttsVoice=null');
+          speechLog('__speechUnlocked=' + !!window.__speechUnlocked);
+          speechLog('__ttsRate=' + (window.__ttsRate || '(empty)'));
+        }
+        var responseText = (elResponse && elResponse.textContent) ? elResponse.textContent.trim() : '';
+        speechLog('elResponse.textContent length=' + (responseText ? responseText.length : 0));
+        if (!responseText) {
+          speechLog('Speak: no response text to speak');
+          return;
+        }
+        unlockSpeechForResponse();
+        speakResponseText(responseText, 'btnSpeak');
+        speechLog('--- Speak button handler done ---');
+      });
+      if (typeof window.speechSynthesis !== 'undefined') {
+        speechLog('Page load: speechSynthesis available');
+        function logVoices() {
+          var v = window.speechSynthesis.getVoices();
+          speechLog('Voices loaded: count=' + (v ? v.length : 0));
+        }
+        if (window.speechSynthesis.getVoices().length) logVoices();
+        else window.speechSynthesis.onvoiceschanged = function () { speechLog('onvoiceschanged fired'); logVoices(); };
+      } else {
+        speechLog('Page load: speechSynthesis NOT available');
+      }
       connect();
 
       (function () {
@@ -1183,6 +1337,7 @@
           document.getElementById('settingsTopicHints').value = data.topic_hints || '';
           var ttsRateEl = document.getElementById('settingsTtsRate');
           if (ttsRateEl) ttsRateEl.value = data.tts_rate || '';
+          window.__ttsRate = data.tts_rate || '';
           const voiceFilter = data.tts_voice_filter || '';
           const filterSel = document.getElementById('settingsVoiceFilter');
           if (filterSel) filterSel.value = voiceFilter;
@@ -1225,6 +1380,7 @@
         const tts_voice_filter = (document.getElementById('settingsVoiceFilter') && document.getElementById('settingsVoiceFilter').value) || '';
         const tts_rate = (document.getElementById('settingsTtsRate') && document.getElementById('settingsTtsRate').value) || '';
         api('/api/settings', { method: 'PUT', body: JSON.stringify({ user_context: user_context, preferred_name: preferred_name, pronouns: pronouns, response_style: response_style, response_length: response_length, topic_hints: topic_hints, tts_voice: tts_voice, tts_voice_filter: tts_voice_filter, tts_rate: tts_rate }) }).then(function () {
+          window.__ttsRate = tts_rate;
           if (typeof window.speechSynthesis !== 'undefined') {
             const voices = window.speechSynthesis.getVoices();
             const v = voices.find(function (x) { return x.name === tts_voice; }) || voices.find(function (x) { return x.name.indexOf(tts_voice) >= 0; });
@@ -1276,9 +1432,13 @@
           if (!chosen) return;
           var voices = window.speechSynthesis.getVoices();
           var v = voices.find(function (x) { return x.name === chosen; }) || voices.find(function (x) { return x.name.indexOf(chosen) >= 0; });
+          try { window.speechSynthesis.resume(); } catch (e) {}
           window.speechSynthesis.cancel();
           var u = new SpeechSynthesisUtterance('This is a sample of the selected voice.');
+          u.lang = 'en-US';
+          u.volume = 1;
           if (v) u.voice = v;
+          u.rate = ttsRateToUtteranceRate(getTtsRateForSpeak());
           window.speechSynthesis.speak(u);
         });
       })();
@@ -1583,6 +1743,7 @@
         window.speechSynthesis.cancel();
         var u = new SpeechSynthesisUtterance(text);
         if (window.ttsVoice) u.voice = window.ttsVoice;
+        u.rate = ttsRateToUtteranceRate(getTtsRateForSpeak());
         u.onend = function () { if (onDone) setTimeout(onDone, 400); };
         u.onerror = function () { if (onDone) setTimeout(onDone, 400); };
         window.speechSynthesis.speak(u);

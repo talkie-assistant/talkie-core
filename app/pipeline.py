@@ -744,7 +744,8 @@ class Pipeline:
                     )
                     reg_system, reg_user = build_regeneration_prompts(
                         text,
-                        system_prompt=self._llm_prompt_config.get(
+                        system_prompt=self._llm_prompt_config.get("system_prompt")
+                        or self._llm_prompt_config.get(
                             "regeneration_system_prompt"
                         ),
                         user_prompt_template=self._llm_prompt_config.get(
